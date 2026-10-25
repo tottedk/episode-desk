@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Episode desk</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <header class="mast">
+    <div class="mast-inner">
+      <div>
+        <p class="eyebrow"><span class="lamp" aria-hidden="true"></span> Pre-roll</p>
+        <h1>Episode desk</h1>
+        <p class="lede">Set the source, the voices, and the shape. The desk writes a brief and hands it to the pipeline on this PC.</p>
+      </div>
+      <button type="button" class="stop" id="stop-btn">Stop server</button>
+    </div>
+  </header>
+  <div class="ribbon" id="dry-run-ribbon" hidden>Dry run. The brief is saved. The pipeline is not started.</div>
+  <main>
+    <form class="sheet" id="brief-form" novalidate>
+      <div id="banner" class="banner" hidden role="status"></div>
+      <div id="load-error" class="banner bad" hidden role="alert"></div>
+      <button type="button" class="ghost" id="retry-btn" hidden>Try again</button>
+
+      <section class="field" id="field-source">
+        <h2>Source</h2>
+        <div class="segment" role="radiogroup" aria-label="Source">
+          <label><input type="radio" name="source_mode" value="files" checked> Books</label>
+          <label><input type="radio" name="source_mode" value="theme"> Theme</label>
+        </div>
+        <div id="files-panel">
+          <p class="hint" id="books-hint">Up to two files. pdf, epub, txt, or md.</p>
+          <div class="dropdown" id="books-dropdown">
+            <button type="button" class="dropdown-btn" id="books-toggle" aria-expanded="false" aria-controls="books-panel">
+              <span id="books-summary">Choose up to two books</span>
+              <span class="caret" aria-hidden="true"></span>
+            </button>
+            <div class="dropdown-panel" id="books-panel" hidden></div>
+          </div>
+        </div>
+        <div id="theme-panel" hidden>
+          <label for="theme">Theme</label>
+          <input id="theme" name="theme" type="text" maxlength="240" autocomplete="off" spellcheck="true" placeholder="A subject, with no source book">
+        </div>
+        <p class="field-error" id="error-source" role="alert"></p>
+      </section>
+
+      <section class="field" id="field-length_minutes">
+        <h2 id="length-label">Length</h2>
+        <div class="segment" role="radiogroup" aria-labelledby="length-label">
+          <label><input type="radio" name="length" value="20"> 20 min</label>
+          <label><input type="radio" name="length" value="30"> 30 min</label>
+          <label><input type="radio" name="length" value="40" checked> 40 min</label>
+        </div>
+        <p class="field-error" id="error-length_minutes" role="alert"></p>
+      </section>
+
+      <section class="field" id="field-guest_voices">
+        <h2>Guest voices</h2>
+        <p class="host-lock">Host <strong id="host-name">Carter</strong> <span>Always. Not a guest.</span></p>
+        <p class="hint">Pick one or two. Hugh is not listed. He is not paired with Carter.</p>
+        <div class="voices" id="voices" role="group" aria-label="Guest voices"></div>
+        <p class="field-error" id="error-guest_voices" role="alert"></p>
+      </section>
+
+      <section class="field" id="field-tone">
+        <label for="tone">Tone</label>
+        <select id="tone" name="tone">
+          <option value="">Choose a tone</option>
+          <option value="calm">Calm</option>
+          <option value="playful">Playful</option>
+          <option value="debate">Debate</option>
+          <option value="serious">Serious</option>
+        </select>
+        <p class="field-error" id="error-tone" role="alert"></p>
+      </section>
+
+      <section class="field" id="field-depth">
+        <label for="depth">Depth</label>
+        <select id="depth" name="depth">
+          <option value="">Choose a depth</option>
+          <option value="intro">Intro</option>
+          <option value="standard">Standard</option>
+          <option value="deep">Deep</option>
+        </select>
+        <p class="field-error" id="error-depth" role="alert"></p>
+      </section>
+
+      <section class="field" id="field-quiz">
+        <h2 id="quiz-label">Quiz</h2>
+        <div class="segment" role="radiogroup" aria-labelledby="quiz-label">
+          <label><input type="radio" name="quiz" value="yes"> Yes</label>
+          <label><input type="radio" name="quiz" value="no" checked> No</label>
+        </div>
+        <p class="hint">A short quiz at the end of the episode.</p>
+        <p class="field-error" id="error-quiz" role="alert"></p>
+      </section>
+
+      <section class="field" id="field-tts">
+        <h2>Speech</h2>
+        <dl class="engine">
+          <div>
+            <dt>Engine</dt>
+            <dd>Fish Audio Drama 3</dd>
+          </div>
+          <div>
+            <dt>Fallback only</dt>
+            <dd>VibeVoice-7B</dd>
+          </div>
+        </dl>
+        <p class="hint">Fixed. This desk does not switch engines.</p>
+      </section>
+
+      <section class="field" id="field-notes">
+        <label for="notes">Notes</label>
+        <textarea id="notes" name="notes" maxlength="4000" spellcheck="true" placeholder="Optional. A cold open, a name to pronounce, a chapter to skip."></textarea>
+        <p class="field-error" id="error-notes" role="alert"></p>
+      </section>
+
+      <div class="actions">
+        <button type="submit" class="primary" id="submit-btn" disabled>Write brief and launch</button>
+        <p class="hint" id="submit-hint"></p>
+      </div>
+    </form>
+
+    <aside class="monitor" aria-labelledby="status-heading">
+      <div class="monitor-head">
+        <h2 id="status-heading">Pipeline status</h2>
+        <button type="button" class="ghost" id="check-now">Check now</button>
+      </div>
+      <p class="hint">Checks the status file every 10 seconds.</p>
+      <p class="monitor-path" id="status-path"></p>
+      <pre id="status-text">Waiting for the first check.</pre>
+      <p class="checked" id="status-checked"></p>
+    </aside>
+  </main>
+  <footer class="meta">
+    <p>Shelf <code id="meta-books">…</code></p>
+    <p>Briefs <code id="meta-briefs">…</code></p>
+  </footer>
+  <noscript>
+    <p class="noscript">This desk needs JavaScript to load the shelf and write a brief.</p>
+  </noscript>
+  <script src="/app.js"></script>
+</body>
+</html>
