@@ -129,18 +129,31 @@ class ServerTest(unittest.TestCase):
             self.assertTrue(kwargs["start_new_session"])
             self.assertNotIn("creationflags", kwargs)
 
-    def test_immediate_launcher_exit_is_not_success(self) -> None:
+    def test_clean_launcher_exit_is_success(self) -> None:
         self.app.dry_run = False
         proc = mock.Mock()
         proc.pid = 5
         proc.wait.return_value = 0
         with mock.patch("podcast_brief.subprocess.Popen", return_value=proc):
             status, payload, _headers = self.request("POST", "/api/brief", support.valid_payload())
+        self.assertEqual(status, 201, payload)
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["launched"])
+        self.assertEqual(payload["pid"], 5)
+        self.assertTrue(Path(payload["brief_path"]).is_file())
+
+    def test_nonzero_launcher_exit_is_not_success(self) -> None:
+        self.app.dry_run = False
+        proc = mock.Mock()
+        proc.pid = 6
+        proc.wait.return_value = 7
+        with mock.patch("podcast_brief.subprocess.Popen", return_value=proc):
+            status, payload, _headers = self.request("POST", "/api/brief", support.valid_payload())
         self.assertEqual(status, 500, payload)
         self.assertFalse(payload["ok"])
         self.assertTrue(payload["brief_written"])
         self.assertFalse(payload["launched"])
-        self.assertIn("code 0", payload["error"])
+        self.assertIn("code 7", payload["error"])
         self.assertTrue(Path(payload["brief_path"]).is_file())
 
     def test_rejects_hugh_and_does_not_write(self) -> None:

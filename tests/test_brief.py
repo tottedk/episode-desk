@@ -470,10 +470,26 @@ class LaunchTests(unittest.TestCase):
         self.assertIn(r"'C:\briefs\brief.json'", argv[-1])
         self.assertNotIn("{brief_path}", argv[-1])
 
-    def test_immediate_exit_is_a_failure_even_with_code_zero(self) -> None:
+    def test_clean_exit_counts_as_launched(self) -> None:
         proc = mock.Mock()
         proc.pid = 11
         proc.wait.return_value = 0
+        with mock.patch("podcast_brief.subprocess.Popen", return_value=proc):
+            result = launch_detached(
+                "echo {brief_path}",
+                r"C:\briefs\brief.json",
+                dry_run=False,
+                platform_name="nt",
+            )
+        self.assertTrue(result["launched"])
+        self.assertEqual(result["pid"], 11)
+        self.assertFalse(result["dry_run"])
+        proc.wait.assert_called_once_with(timeout=LAUNCH_SETTLE_SECONDS)
+
+    def test_nonzero_exit_is_a_failure(self) -> None:
+        proc = mock.Mock()
+        proc.pid = 12
+        proc.wait.return_value = 3
         with mock.patch("podcast_brief.subprocess.Popen", return_value=proc):
             with self.assertRaises(LaunchError) as caught:
                 launch_detached(
@@ -482,7 +498,7 @@ class LaunchTests(unittest.TestCase):
                     dry_run=False,
                     platform_name="nt",
                 )
-        self.assertIn("code 0", str(caught.exception))
+        self.assertIn("code 3", str(caught.exception))
         proc.wait.assert_called_once_with(timeout=LAUNCH_SETTLE_SECONDS)
 
     def test_posix_launch_starts_a_new_session(self) -> None:

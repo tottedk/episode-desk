@@ -371,8 +371,12 @@ def launch_detached(
     ``dry_run`` writes nothing here and does not start a process. The brief
     file is written by the caller either way. On Windows the process is
     created with CREATE_NO_WINDOW and a new process group, so it is not
-    attached to the desk console. If it has already exited after about two
-    seconds, this raises ``LaunchError`` instead of reporting success.
+    attached to the desk console. After about two seconds, a process that is
+    still running or that exited 0 counts as launched. A non-zero exit in
+    that window raises ``LaunchError``. A quick exit 0 is how a launcher
+    that only registers a scheduled task reports success. The old
+    ``DETACHED_PROCESS`` failure also exits 0, so the creation flags are
+    what keep that case from looking like a real launch.
     """
     command = render_launcher_command(template, brief_path)
     if dry_run:
@@ -409,7 +413,9 @@ def launch_detached(
         code = proc.wait(timeout=LAUNCH_SETTLE_SECONDS)
     except subprocess.TimeoutExpired:
         return {"launched": True, "pid": proc.pid, "dry_run": False}
-    raise LaunchError(f"The launcher exited immediately with code {code}.")
+    if code == 0:
+        return {"launched": True, "pid": proc.pid, "dry_run": False}
+    raise LaunchError(f"The launcher exited with code {code}.")
 
 
 def _launch_cwd(brief_path: str) -> str:
