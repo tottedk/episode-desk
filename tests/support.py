@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
+from unittest import mock
 
-from podcast_brief import DEFAULT_BANNED_VOICES, AppConfig
+from podcast_brief import DEFAULT_BANNED_VOICES, LAUNCH_SETTLE_SECONDS, AppConfig
 
 
 def write_shelf(books: Path) -> None:
@@ -58,3 +60,11 @@ def valid_payload(**overrides) -> dict:
 
 def write_config(path: Path, body: dict) -> None:
     path.write_text(json.dumps(body), encoding="utf-8")
+
+
+def running_launcher(pid: int) -> mock.Mock:
+    """A Popen stand-in that is still alive after the settle wait."""
+    proc = mock.Mock()
+    proc.pid = pid
+    proc.wait.side_effect = subprocess.TimeoutExpired("powershell.exe", LAUNCH_SETTLE_SECONDS)
+    return proc

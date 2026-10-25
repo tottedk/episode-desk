@@ -177,6 +177,7 @@ def make_handler(app: App):
                     app.config.launcher_cmd, str(path), dry_run=app.dry_run
                 )
             except LaunchError as exc:
+                print(f"Launcher failed: {exc}", flush=True)
                 self._send_json(
                     500,
                     {

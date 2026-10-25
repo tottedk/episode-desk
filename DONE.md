@@ -11,7 +11,7 @@ Episode desk is a local page for writing a podcast brief and handing it to a pip
 - [x] One or two guest voices. Carter is always the host and is not a guest. Hugh is never selectable. `banned_voices` defaults to Maya, Declan, Alice, Mary when the key is omitted.
 - [x] Tone, depth, quiz, optional notes.
 - [x] Speech is fixed: Fish Audio Drama 3, fallback VibeVoice-7B. The page has no control for it, and a client-supplied engine is ignored.
-- [x] Submit validates, writes `brief_<slug>_<timestamp>.json`, and starts `launcher_cmd` detached. `--dry-run` / `-DryRun` writes the brief and does not launch.
+- [x] Submit validates, writes `brief_<slug>_<timestamp>.json`, and starts `launcher_cmd`. On Windows the flags are `CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP` (`0x08000200`). `DETACHED_PROCESS` is not used. If PowerShell has exited after about 2 seconds, the desk reports failure and keeps the brief. `--dry-run` / `-DryRun` writes the brief and does not launch.
 - [x] Status panel reads `status_file` on load and every 10 seconds.
 - [x] Unittest coverage for validation, brief writing, the launcher, and the loopback bind.
 
@@ -35,3 +35,17 @@ Live server, dry run, port 47221:
 The page was exercised in a browser against `http://127.0.0.1:47221/` (dry run). An empty submit showed errors for books, guests, tone, and depth. A third book and a third guest would not stay selected. Submitting On Lighthouses.pdf, Coast Notes.txt, Elena, Jonah, calm, deep, quiz yes, and a note wrote `brief_on-lighthouses_20261025_130629.json` and the page said the pipeline was not started. The status text was already visible, and the "Checked" time advanced on its own across the 10 second poll. At about 390px wide the form sits above the status panel and the submit button spans the form. Stop server was not used, so the desk stayed up.
 
 `ss` was not installed in this environment. The bind check used `/proc/net/tcp` instead.
+
+## Launcher fix
+
+On Windows PowerShell 5.1, `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP` (`0x208`) makes `powershell.exe` exit without running `-Command`. `Popen` still returns a pid, so the desk was reporting success. The flags are now `CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP` (`0x08000200`), which was the combination that kept the command running on that PC. After start, the desk waits 2 seconds. An exit in that window, including exit code 0, is a failed launch. The brief file is left in place.
+
+The symlink shelf test calls `skipTest` when creating the link raises `OSError`, which is what Windows does without permission to create symlinks. Extension filtering stays in its own test and still runs.
+
+Verified here with:
+
+```text
+python3 -m unittest discover -s tests -v
+```
+
+Result: **50 tests, OK**. That includes the flag value `0x08000200` (and that bit `0x8` is off), a still-running process reported as launched, and an immediate exit code 0 reported as failure with the brief still written. This machine is Linux, so `powershell.exe` itself was not launched here. Symlink creation works on this machine, so the skip path was not taken.

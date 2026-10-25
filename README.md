@@ -100,6 +100,8 @@ Voice rules, applied in this order:
 
 The working directory of the launched PowerShell process is the briefs folder. The brief path on the command line is absolute.
 
+On Windows the process is created with `CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP` (`0x08000200`). `DETACHED_PROCESS` (`0x8`) is not used: under PowerShell 5.1 it makes `powershell.exe` exit without running `-Command`, and the process id alone looks like success. After starting it, the desk waits about 2 seconds. If PowerShell has already exited, the brief stays on disk and the page reports that the pipeline did not start.
+
 ## Form
 
 - **Source.** A dropdown of files in `books_dir` (pdf, epub, txt, md), up to 2, or a free-text theme. Not both.
@@ -212,7 +214,7 @@ tests/                 unittest
 - Book choices are resolved and rejected when they escape `books_dir`, when they are symlinks, or when the extension is not pdf, epub, txt, or md.
 - The brief path is inserted into `launcher_cmd` as a PowerShell single-quoted literal. `launcher_cmd` itself is local configuration, so it is trusted on this PC.
 - Request bodies are capped at 32 KB. Status text is capped at 16 KB.
-- The launched pipeline is detached, so it keeps running after the desk stops. Stop server does not kill it.
+- The launched pipeline is in its own process group and has no console window, so it keeps running after the desk stops. Stop server does not kill it. An immediate PowerShell exit is reported as a failed launch.
 
 ## Troubleshooting
 
@@ -220,5 +222,5 @@ tests/                 unittest
 - **Port in use.** Pass `-Port` with another port, or close the other desk window.
 - **Empty shelf.** The books folder is missing, or it has no pdf, epub, txt, or md files. A theme still works.
 - **Briefs folder does not exist.** Create `briefs_dir` before submitting.
-- **Pipeline did not start.** Run once with `-DryRun` and confirm the brief file. Then check `launcher_cmd`. The desk looks for `powershell.exe` (Windows PowerShell 5.1), not `pwsh`.
+- **Pipeline did not start.** Run once with `-DryRun` and confirm the brief file. Then check `launcher_cmd`. The desk looks for `powershell.exe` (Windows PowerShell 5.1), not `pwsh`. If the message says the launcher exited immediately, PowerShell quit within about 2 seconds. The brief file is still there.
 - **Browser did not open.** Open the `http://127.0.0.1:...` URL printed in the window. Use `127.0.0.1`, not a LAN address.

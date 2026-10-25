@@ -21,7 +21,11 @@ sys.path.insert(0, str(ROOT / "tests"))
 import support  # noqa: E402
 
 import server  # noqa: E402
-from podcast_brief import MAX_STATUS_BYTES, WINDOWS_DETACHED_FLAGS  # noqa: E402
+from podcast_brief import (  # noqa: E402
+    LAUNCH_SETTLE_SECONDS,
+    MAX_STATUS_BYTES,
+    WINDOWS_DETACHED_FLAGS,
+)
 from server import App, create_server  # noqa: E402
 
 
@@ -108,8 +112,7 @@ class ServerTest(unittest.TestCase):
 
     def test_launch_uses_detached_powershell_when_not_dry_run(self) -> None:
         self.app.dry_run = False
-        proc = mock.Mock()
-        proc.pid = 99
+        proc = support.running_launcher(99)
         with mock.patch("podcast_brief.subprocess.Popen", return_value=proc) as popen:
             status, payload, _headers = self.request("POST", "/api/brief", support.valid_payload())
         self.assertEqual(status, 201, payload)
@@ -119,11 +122,26 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(popen.call_args.args[0][0], "powershell.exe")
         kwargs = popen.call_args.kwargs
         self.assertFalse(kwargs["shell"])
+        proc.wait.assert_called_once_with(timeout=LAUNCH_SETTLE_SECONDS)
         if os.name == "nt":
             self.assertEqual(kwargs["creationflags"], WINDOWS_DETACHED_FLAGS)
         else:
             self.assertTrue(kwargs["start_new_session"])
             self.assertNotIn("creationflags", kwargs)
+
+    def test_immediate_launcher_exit_is_not_success(self) -> None:
+        self.app.dry_run = False
+        proc = mock.Mock()
+        proc.pid = 5
+        proc.wait.return_value = 0
+        with mock.patch("podcast_brief.subprocess.Popen", return_value=proc):
+            status, payload, _headers = self.request("POST", "/api/brief", support.valid_payload())
+        self.assertEqual(status, 500, payload)
+        self.assertFalse(payload["ok"])
+        self.assertTrue(payload["brief_written"])
+        self.assertFalse(payload["launched"])
+        self.assertIn("code 0", payload["error"])
+        self.assertTrue(Path(payload["brief_path"]).is_file())
 
     def test_rejects_hugh_and_does_not_write(self) -> None:
         status, payload, _headers = self.request(

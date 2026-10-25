@@ -19,11 +19,13 @@ import support  # noqa: E402
 from podcast_brief import (  # noqa: E402
     DEFAULT_BANNED_VOICES,
     HOST_VOICE,
+    LAUNCH_SETTLE_SECONDS,
     TTS_ENGINE,
     TTS_FALLBACK,
     WINDOWS_DETACHED_FLAGS,
     BriefIOError,
     ConfigError,
+    LaunchError,
     launch_detached,
     list_books,
     load_config,
@@ -170,14 +172,11 @@ class ConfigTests(unittest.TestCase):
 
 
 class ShelfTests(unittest.TestCase):
-    def test_list_books_filters_extensions_and_symlinks(self) -> None:
+    def test_list_books_filters_extensions(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             books = root / "books"
             support.write_shelf(books)
-            secret = root / "secret.txt"
-            secret.write_text("nope", encoding="utf-8")
-            (books / "secret.txt").symlink_to(secret)
             found, truncated = list_books(books)
             self.assertFalse(truncated)
             self.assertEqual(
@@ -189,6 +188,22 @@ class ShelfTests(unittest.TestCase):
                     "On Lighthouses.pdf",
                 ],
             )
+
+    def test_list_books_skips_symlinks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            books = root / "books"
+            support.write_shelf(books)
+            secret = root / "secret.txt"
+            secret.write_text("nope", encoding="utf-8")
+            link = books / "secret.txt"
+            try:
+                link.symlink_to(secret)
+            except OSError as exc:
+                self.skipTest(f"symlinks are not available: {exc}")
+            rels = [item["rel"] for item in list_books(books)[0]]
+            self.assertNotIn("secret.txt", rels)
+            self.assertIn("On Lighthouses.pdf", rels)
 
     def test_list_caps(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -429,8 +444,7 @@ class LaunchTests(unittest.TestCase):
         self.assertIsNone(result["pid"])
 
     def test_windows_launch_is_detached(self) -> None:
-        proc = mock.Mock()
-        proc.pid = 7
+        proc = support.running_launcher(7)
         brief = r"C:\briefs\brief.json"
         with mock.patch("podcast_brief.subprocess.Popen", return_value=proc) as popen:
             result = launch_detached(
@@ -443,18 +457,36 @@ class LaunchTests(unittest.TestCase):
         self.assertTrue(result["launched"])
         kwargs = popen.call_args.kwargs
         self.assertEqual(kwargs["creationflags"], WINDOWS_DETACHED_FLAGS)
-        self.assertEqual(kwargs["creationflags"], 0x00000008 | 0x00000200)
+        self.assertEqual(kwargs["creationflags"], 0x08000000 | 0x00000200)
+        self.assertEqual(kwargs["creationflags"], 0x08000200)
+        self.assertEqual(WINDOWS_DETACHED_FLAGS & 0x00000008, 0)
         self.assertNotIn("start_new_session", kwargs)
         self.assertFalse(kwargs["shell"])
+        proc.wait.assert_called_once_with(timeout=LAUNCH_SETTLE_SECONDS)
+        self.assertEqual(LAUNCH_SETTLE_SECONDS, 2.0)
         argv = popen.call_args.args[0]
         self.assertEqual(argv[0], "powershell.exe")
         self.assertIn("-Command", argv)
         self.assertIn(r"'C:\briefs\brief.json'", argv[-1])
         self.assertNotIn("{brief_path}", argv[-1])
 
-    def test_posix_launch_starts_a_new_session(self) -> None:
+    def test_immediate_exit_is_a_failure_even_with_code_zero(self) -> None:
         proc = mock.Mock()
-        proc.pid = 3
+        proc.pid = 11
+        proc.wait.return_value = 0
+        with mock.patch("podcast_brief.subprocess.Popen", return_value=proc):
+            with self.assertRaises(LaunchError) as caught:
+                launch_detached(
+                    "echo {brief_path}",
+                    r"C:\briefs\brief.json",
+                    dry_run=False,
+                    platform_name="nt",
+                )
+        self.assertIn("code 0", str(caught.exception))
+        proc.wait.assert_called_once_with(timeout=LAUNCH_SETTLE_SECONDS)
+
+    def test_posix_launch_starts_a_new_session(self) -> None:
+        proc = support.running_launcher(3)
         with mock.patch("podcast_brief.subprocess.Popen", return_value=proc) as popen:
             launch_detached(
                 "echo {brief_path}",
@@ -464,6 +496,7 @@ class LaunchTests(unittest.TestCase):
             )
         self.assertTrue(popen.call_args.kwargs["start_new_session"])
         self.assertNotIn("creationflags", popen.call_args.kwargs)
+        proc.wait.assert_called_once_with(timeout=LAUNCH_SETTLE_SECONDS)
 
 
 class StatusTests(unittest.TestCase):

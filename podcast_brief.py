@@ -41,12 +41,14 @@ MAX_STATUS_BYTES = 16_384
 MAX_LAUNCHER_LENGTH = 2000
 BRIEF_PATH_TOKEN = "{brief_path}"
 
-# DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP. The pipeline survives after
-# the desk window closes. CREATE_NO_WINDOW is intentionally not combined
-# with DETACHED_PROCESS.
-DETACHED_PROCESS = 0x00000008
+# DETACHED_PROCESS (0x00000008) makes Windows PowerShell 5.1 exit immediately
+# without running -Command. Popen still returns, so the desk used to report
+# success. CREATE_NO_WINDOW keeps the pipeline off the desk console.
+# CREATE_NEW_PROCESS_GROUP keeps it out of the desk's Ctrl+C group.
+CREATE_NO_WINDOW = 0x08000000
 CREATE_NEW_PROCESS_GROUP = 0x00000200
-WINDOWS_DETACHED_FLAGS = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+WINDOWS_DETACHED_FLAGS = CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
+LAUNCH_SETTLE_SECONDS = 2.0
 
 _ID_RE = re.compile(r"^brief_[a-z0-9-]+_\d{8}_\d{6}(?:_\d+)?$")
 _WRITE_LOCK = threading.Lock()
@@ -368,8 +370,9 @@ def launch_detached(
 
     ``dry_run`` writes nothing here and does not start a process. The brief
     file is written by the caller either way. On Windows the process is
-    created with DETACHED_PROCESS and a new process group, so closing the
-    desk window does not kill the pipeline.
+    created with CREATE_NO_WINDOW and a new process group, so it is not
+    attached to the desk console. If it has already exited after about two
+    seconds, this raises ``LaunchError`` instead of reporting success.
     """
     command = render_launcher_command(template, brief_path)
     if dry_run:
@@ -402,7 +405,11 @@ def launch_detached(
         )
     except OSError as exc:
         raise LaunchError(f"Could not start PowerShell: {exc}") from exc
-    return {"launched": True, "pid": proc.pid, "dry_run": False}
+    try:
+        code = proc.wait(timeout=LAUNCH_SETTLE_SECONDS)
+    except subprocess.TimeoutExpired:
+        return {"launched": True, "pid": proc.pid, "dry_run": False}
+    raise LaunchError(f"The launcher exited immediately with code {code}.")
 
 
 def _launch_cwd(brief_path: str) -> str:
