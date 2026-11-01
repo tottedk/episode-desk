@@ -20,21 +20,37 @@ from typing import Sequence
 
 # Carter hosts every episode. Hugh is never a guest: he is not paired with
 # Carter, and Carter is always the host, so Hugh is never selectable.
+# Elliot is a monotone Drama 3 voice, so he is never offered either.
 HOST_VOICE = "Carter"
 EXCLUDED_WITH_HOST = "Hugh"
+OUT_VOICES = ("Elliot",)
 DEFAULT_BANNED_VOICES = ("Maya", "Declan", "Alice", "Mary")
+# These names are in the roster but have no Drama 3 reference clip yet.
+# config.json can replace this list. An empty list makes them selectable.
+DEFAULT_NOT_READY_VOICES = (
+    "Isla",
+    "Marcus",
+    "Willa",
+    "Zara",
+    "Imogen",
+    "Frank",
+    "Samuel",
+)
+NOT_READY_NOTE = "voice not ready for Drama 3 yet"
 
 BOOK_EXTENSIONS = frozenset({".pdf", ".epub", ".txt", ".md"})
 LENGTH_MINUTES = (20, 30, 40)
 DEFAULT_LENGTH_MINUTES = 40
 TONES = ("calm", "playful", "debate", "serious")
 DEPTHS = ("intro", "standard", "deep")
+CONTENT_STYLES = ("v2.5", "v2.3")
+DEFAULT_CONTENT_STYLE = "v2.5"
 
 TTS_ENGINE = "Fish Audio Drama 3"
 TTS_FALLBACK = "VibeVoice-7B"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
-MAX_THEME_LENGTH = 240
+MAX_TOPIC_LENGTH = 600
 MAX_NOTES_LENGTH = 4000
 MAX_BOOKS_LISTED = 2000
 MAX_STATUS_BYTES = 16_384
@@ -77,14 +93,16 @@ class AppConfig:
     launcher_cmd: str
     voices: tuple[str, ...]
     banned_voices: tuple[str, ...]
+    not_ready_voices: tuple[str, ...]
     status_file: Path
 
 
 @dataclass(frozen=True)
 class EpisodeRequest:
-    source_type: str
+    topic: str
     files: tuple[Path, ...]
-    theme: str | None
+    research: bool
+    content_style: str
     length_minutes: int
     guest_voices: tuple[str, ...]
     tone: str
@@ -120,34 +138,68 @@ def load_config(path: Path) -> AppConfig:
         banned = DEFAULT_BANNED_VOICES
     else:
         banned = _require_name_list(data, "banned_voices", allow_empty=True)
+    if "not_ready_voices" not in data:
+        not_ready = DEFAULT_NOT_READY_VOICES
+    else:
+        not_ready = _require_name_list(data, "not_ready_voices", allow_empty=True)
     return AppConfig(
         books_dir=books_dir,
         briefs_dir=briefs_dir,
         launcher_cmd=launcher,
         voices=voices,
         banned_voices=banned,
+        not_ready_voices=not_ready,
         status_file=status_file,
     )
 
 
-def selectable_voices(voices: Sequence[str], banned_voices: Sequence[str]) -> list[str]:
-    """Voices the desk may offer as guests.
+def voice_choices(
+    voices: Sequence[str],
+    banned_voices: Sequence[str],
+    not_ready_voices: Sequence[str] = (),
+) -> list[dict[str, object]]:
+    """Guests to show, in roster order.
 
-    Carter is the host. Hugh is never offered. Names in ``banned_voices``
-    are never offered. Order follows ``voices``.
+    A ready guest can be picked. A not-ready guest is shown and cannot be
+    picked. Carter, Hugh, Elliot, and ``banned_voices`` are left off the page.
     """
     blocked = {name.casefold() for name in banned_voices}
     blocked.add(HOST_VOICE.casefold())
     blocked.add(EXCLUDED_WITH_HOST.casefold())
-    result: list[str] = []
+    blocked.update(name.casefold() for name in OUT_VOICES)
+    waiting = {name.casefold() for name in not_ready_voices}
+    result: list[dict[str, object]] = []
     seen: set[str] = set()
     for voice in voices:
         key = voice.casefold()
         if key in blocked or key in seen:
             continue
         seen.add(key)
-        result.append(voice)
+        ready = key not in waiting
+        entry: dict[str, object] = {"name": voice, "ready": ready}
+        if not ready:
+            entry["note"] = NOT_READY_NOTE
+        result.append(entry)
     return result
+
+
+def selectable_voices(
+    voices: Sequence[str],
+    banned_voices: Sequence[str],
+    not_ready_voices: Sequence[str] = (),
+) -> list[str]:
+    """Voices the desk may accept as guests.
+
+    Carter is the host. Hugh is never offered. Elliot is never offered.
+    Names in ``banned_voices`` are never offered. Names in
+    ``not_ready_voices`` are shown but cannot be picked. Order follows
+    ``voices``.
+    """
+    names: list[str] = []
+    for choice in voice_choices(voices, banned_voices, not_ready_voices):
+        if choice["ready"] is True and isinstance(choice["name"], str):
+            names.append(choice["name"])
+    return names
 
 
 def list_books(books_dir: Path) -> tuple[list[dict[str, str]], bool]:
@@ -222,9 +274,13 @@ def validate_payload(
         return None, {"form": "Expected an object."}
 
     errors: dict[str, str] = {}
-    source_type, files, theme, source_error = _validate_source(payload, config)
+    topic, files, research, source_error = _validate_source(payload, config)
     if source_error:
         errors["source"] = source_error
+
+    content_style, style_error = _clean_content_style(payload)
+    if style_error:
+        errors["content_style"] = style_error
 
     length, length_error = _clean_length(payload)
     if length_error:
@@ -252,7 +308,9 @@ def validate_payload(
 
     if (
         errors
-        or source_type is None
+        or topic is None
+        or research is None
+        or content_style is None
         or length is None
         or guests is None
         or tone is None
@@ -264,9 +322,10 @@ def validate_payload(
 
     return (
         EpisodeRequest(
-            source_type=source_type,
+            topic=topic,
             files=files,
-            theme=theme,
+            research=research,
+            content_style=content_style,
             length_minutes=length,
             guest_voices=guests,
             tone=tone,
@@ -291,23 +350,18 @@ def build_brief(episode: EpisodeRequest, *, brief_id: str, now: datetime) -> dic
     """Build the brief document. Host and TTS are fixed here, not taken from the form."""
     if now.tzinfo is None:
         raise BriefIOError("Brief timestamps need a timezone.")
-    if episode.source_type == "files":
-        source: dict[str, object] = {
-            "type": "files",
-            "files": [str(path) for path in episode.files],
-            "theme": None,
-        }
-    else:
-        source = {
-            "type": "theme",
-            "files": [],
-            "theme": episode.theme,
-        }
+    source: dict[str, object] = {
+        "type": "topic",
+        "topic": episode.topic,
+        "files": [str(path) for path in episode.files],
+        "research": "web" if episode.research else "none",
+    }
     return {
         "schema_version": SCHEMA_VERSION,
         "id": brief_id,
         "created_at": now.isoformat(timespec="seconds"),
         "source": source,
+        "content_style": episode.content_style,
         "length_minutes": episode.length_minutes,
         "host": HOST_VOICE,
         "guest_voices": list(episode.guest_voices),
@@ -329,11 +383,7 @@ def write_episode(
     moment = now if now is not None else datetime.now().astimezone()
     if moment.tzinfo is None:
         raise BriefIOError("Brief timestamps need a timezone.")
-    if episode.source_type == "files":
-        slug_source = episode.files[0].stem
-    else:
-        slug_source = episode.theme or ""
-    slug = slugify(slug_source)
+    slug = slugify(episode.topic)
     directory = config.briefs_dir
     if not directory.is_dir():
         raise BriefIOError(f"Briefs folder does not exist: {directory}")
@@ -478,47 +528,57 @@ def _require_name_list(data: dict, key: str, *, allow_empty: bool) -> tuple[str,
 
 def _validate_source(
     payload: dict, config: AppConfig
-) -> tuple[str | None, tuple[Path, ...], str | None, str | None]:
-    source_type = payload.get("source_type")
-    if source_type not in ("files", "theme"):
-        return None, (), None, "Choose books or a theme."
+) -> tuple[str | None, tuple[Path, ...], bool | None, str | None]:
+    topic_raw = payload.get("topic", "")
+    if topic_raw is None:
+        topic_raw = ""
+    if not isinstance(topic_raw, str):
+        return None, (), None, "Topic must be text."
+    topic, topic_error = _clean_topic(topic_raw)
+    if topic_error:
+        return None, (), None, topic_error
 
     files_raw = payload.get("files", [])
-    theme_raw = payload.get("theme", "")
     if files_raw is None:
         files_raw = []
-    if theme_raw is None:
-        theme_raw = ""
     if not isinstance(files_raw, list) or not all(isinstance(item, str) for item in files_raw):
         return None, (), None, "Books must be a list of file names."
-    if not isinstance(theme_raw, str):
-        return None, (), None, "Theme must be text."
+    if len(files_raw) > 2:
+        return None, (), None, "Pick at most two books."
 
-    if source_type == "files":
-        if theme_raw.strip():
-            return None, (), None, "Choose books or a theme, not both."
-        if not 1 <= len(files_raw) <= 2:
-            return None, (), None, "Pick one or two books."
-        resolved: list[Path] = []
-        seen: set[str] = set()
-        for rel in files_raw:
-            try:
-                path = resolve_book(config.books_dir, rel)
-            except BookError as exc:
-                return None, (), None, str(exc)
-            key = str(path).casefold()
-            if key in seen:
-                return None, (), None, "That book is selected twice."
-            seen.add(key)
-            resolved.append(path)
-        return "files", tuple(resolved), None, None
+    resolved: list[Path] = []
+    seen: set[str] = set()
+    for rel in files_raw:
+        try:
+            path = resolve_book(config.books_dir, rel)
+        except BookError as exc:
+            return None, (), None, str(exc)
+        key = str(path).casefold()
+        if key in seen:
+            return None, (), None, "That book is selected twice."
+        seen.add(key)
+        resolved.append(path)
 
-    if files_raw:
-        return None, (), None, "Choose books or a theme, not both."
-    theme, theme_error = _clean_theme(theme_raw)
-    if theme_error:
-        return None, (), None, theme_error
-    return "theme", (), theme, None
+    if "research" not in payload:
+        research: object = True
+    else:
+        research = payload["research"]
+    if not isinstance(research, bool):
+        return None, (), None, "Research must be on or off."
+    if research is False and not resolved:
+        return None, (), None, "Attach a book or PDF, or turn on web research."
+    return topic, tuple(resolved), research, None
+
+
+def _clean_content_style(payload: dict) -> tuple[str | None, str | None]:
+    """Script style. Omitted means v2.5. Anything else must be v2.5 or v2.3."""
+    if "content_style" not in payload:
+        return DEFAULT_CONTENT_STYLE, None
+    return _clean_choice(
+        payload.get("content_style"),
+        CONTENT_STYLES,
+        "Choose a script style.",
+    )
 
 
 def _validate_guests(
@@ -528,9 +588,16 @@ def _validate_guests(
         return None, "Pick one or two guest voices."
     if not isinstance(raw, list) or not 1 <= len(raw) <= 2:
         return None, "Pick one or two guest voices."
+    choices = voice_choices(config.voices, config.banned_voices, config.not_ready_voices)
     allowed = {
-        voice.casefold(): voice
-        for voice in selectable_voices(config.voices, config.banned_voices)
+        str(choice["name"]).casefold(): str(choice["name"])
+        for choice in choices
+        if choice["ready"] is True
+    }
+    waiting = {
+        str(choice["name"]).casefold(): str(choice["name"])
+        for choice in choices
+        if choice["ready"] is not True
     }
     banned = {name.casefold() for name in config.banned_voices}
     chosen: list[str] = []
@@ -548,20 +615,22 @@ def _validate_guests(
             return None, "Carter hosts. Carter isn't a guest."
         if fold == EXCLUDED_WITH_HOST.casefold():
             return None, "Hugh isn't paired with Carter, so Hugh can't be a guest."
+        if fold in waiting:
+            return None, f"{waiting[fold]} isn't ready for Drama 3 yet."
         if fold in banned or fold not in allowed:
             return None, "That voice isn't available."
         chosen.append(allowed[fold])
     return tuple(chosen), None
 
 
-def _clean_theme(theme: str) -> tuple[str | None, str | None]:
-    if "\x00" in theme:
-        return None, "Theme contains an invalid character."
-    cleaned = re.sub(r"\s+", " ", theme).strip()
+def _clean_topic(topic: str) -> tuple[str | None, str | None]:
+    if "\x00" in topic:
+        return None, "Topic contains an invalid character."
+    cleaned = re.sub(r"\s+", " ", topic).strip()
     if not cleaned:
-        return None, "Enter a theme."
-    if len(cleaned) > MAX_THEME_LENGTH:
-        return None, "Keep the theme under 240 characters."
+        return None, "Enter a topic."
+    if len(cleaned) > MAX_TOPIC_LENGTH:
+        return None, "Keep the topic under 600 characters."
     return cleaned, None
 
 

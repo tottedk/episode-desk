@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import socket
+from dataclasses import replace
 import sys
 import tempfile
 import threading
@@ -79,6 +80,15 @@ class ServerTest(unittest.TestCase):
         status, payload, _headers = self.request("GET", "/api/options")
         self.assertEqual(status, 200)
         self.assertEqual(payload["voices"], ["Elena", "Jonah", "Priya"])
+        self.assertEqual(
+            payload["voice_choices"],
+            [
+                {"name": "Elena", "ready": True},
+                {"name": "Jonah", "ready": True},
+                {"name": "Priya", "ready": True},
+            ],
+        )
+        self.assertEqual(payload["not_ready_note"], "voice not ready for Drama 3 yet")
         self.assertNotIn("Carter", payload["voices"])
         self.assertNotIn("Hugh", payload["voices"])
         self.assertNotIn("Maya", payload["voices"])
@@ -106,9 +116,15 @@ class ServerTest(unittest.TestCase):
         self.assertTrue(written.is_file())
         self.assertEqual(written.parent, self.config.briefs_dir.resolve())
         brief = json.loads(written.read_text(encoding="utf-8"))
+        self.assertEqual(brief["schema_version"], 2)
         self.assertEqual(brief["host"], "Carter")
+        self.assertEqual(brief["source"]["type"], "topic")
+        self.assertEqual(brief["source"]["topic"], "On Lighthouses")
+        self.assertEqual(brief["source"]["research"], "web")
+        self.assertEqual(brief["content_style"], "v2.5")
         self.assertEqual(brief["tts"]["engine"], "Fish Audio Drama 3")
         self.assertNotIn("not the real engine", written.read_text(encoding="utf-8"))
+        self.assertNotIn("theme", brief["source"])
 
     def test_launch_uses_detached_powershell_when_not_dry_run(self) -> None:
         self.app.dry_run = False
@@ -155,6 +171,38 @@ class ServerTest(unittest.TestCase):
         self.assertFalse(payload["launched"])
         self.assertIn("code 7", payload["error"])
         self.assertTrue(Path(payload["brief_path"]).is_file())
+
+    def test_not_ready_guest_is_disabled_and_rejected(self) -> None:
+        self.app.config = replace(
+            self.app.config,
+            voices=("Carter", "Clara", "Lachlan", "Isla"),
+            banned_voices=(),
+            not_ready_voices=("Isla",),
+        )
+        status, payload, _headers = self.request("GET", "/api/options")
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["voices"], ["Clara", "Lachlan"])
+        self.assertEqual(
+            payload["voice_choices"],
+            [
+                {"name": "Clara", "ready": True},
+                {"name": "Lachlan", "ready": True},
+                {
+                    "name": "Isla",
+                    "ready": False,
+                    "note": "voice not ready for Drama 3 yet",
+                },
+            ],
+        )
+        status, payload, _headers = self.request(
+            "POST", "/api/brief", support.valid_payload(guest_voices=["Isla"])
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(
+            payload["errors"]["guest_voices"],
+            "Isla isn't ready for Drama 3 yet.",
+        )
+        self.assertEqual(list(self.config.briefs_dir.glob("brief_*.json")), [])
 
     def test_rejects_hugh_and_does_not_write(self) -> None:
         status, payload, _headers = self.request(
@@ -206,6 +254,26 @@ class ServerTest(unittest.TestCase):
         self.assertNotRegex(html, r'name="tts"')
         self.assertNotRegex(html, r'id="tts"')
         self.assertIn('value="40" checked', html)
+        self.assertIn("What's the episode about?", html)
+        self.assertIn('id="topic"', html)
+        self.assertIn('maxlength="600"', html)
+        self.assertIn("Optional books / PDFs (0-2)", html)
+        self.assertIn('id="research" name="research" checked', html)
+        self.assertIn("Research the web", html)
+        self.assertIn("his Drama 3 voice is monotone", html)
+        self.assertIn("not_ready_voices", html)
+        self.assertIn('id="content_style"', html)
+        self.assertIn('value="v2.5" selected', html)
+        self.assertIn('value="v2.3"', html)
+        self.assertIn("cast + short turns", html)
+        self.assertNotIn("source_mode", html)
+        self.assertNotIn('id="theme"', html)
+        script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+        self.assertIn("is-waiting", script)
+        self.assertIn("voice_choices", script)
+        self.assertIn("Researching the web...", script)
+        self.assertIn("ABORT research too thin", script)
+        self.assertNotIn("source_mode", script)
         for tone in ("calm", "playful", "debate", "serious"):
             self.assertIn(f'value="{tone}"', html)
         for depth in ("intro", "standard", "deep"):

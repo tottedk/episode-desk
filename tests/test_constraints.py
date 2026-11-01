@@ -48,12 +48,37 @@ class ConstraintTests(unittest.TestCase):
                 "launcher_cmd",
                 "voices",
                 "banned_voices",
+                "not_ready_voices",
                 "status_file",
             },
         )
         self.assertEqual(data["banned_voices"], ["Maya", "Declan", "Alice", "Mary"])
-        self.assertIn("Carter", data["voices"])
-        self.assertIn("Hugh", data["voices"])
+        self.assertEqual(
+            data["not_ready_voices"],
+            ["Isla", "Marcus", "Willa", "Zara", "Imogen", "Frank", "Samuel"],
+        )
+        self.assertEqual(
+            data["voices"],
+            [
+                "Carter",
+                "Clara",
+                "Lachlan",
+                "Isla",
+                "Marcus",
+                "Willa",
+                "Zara",
+                "Imogen",
+                "Frank",
+                "Samuel",
+                "Hugh",
+                "Maya",
+                "Declan",
+                "Alice",
+                "Mary",
+            ],
+        )
+        self.assertNotIn("Elliot", data["voices"])
+        self.assertNotIn("Elena", data["voices"])
         self.assertTrue(data["books_dir"].startswith("C:\\"))
         self.assertIn("{brief_path}", data["launcher_cmd"])
 

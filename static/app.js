@@ -3,6 +3,7 @@
 const STATUS_POLL_MS = 10000;
 const ERROR_KEYS = [
   "source",
+  "content_style",
   "guest_voices",
   "tone",
   "depth",
@@ -11,14 +12,16 @@ const ERROR_KEYS = [
   "quiz",
 ];
 
+const NEVER_OFFER = new Set(["carter", "hugh", "elliot"]);
+
 const state = {
   books: [],
   booksError: "",
   booksTruncated: false,
   voices: [],
+  choices: [],
   selectedFiles: [],
   selectedVoices: [],
-  sourceMode: "files",
   dryRun: false,
   pollTimer: null,
   stopped: false,
@@ -28,17 +31,18 @@ let statusInFlight = false;
 
 function init() {
   bindStatic();
-  const selectedMode = document.querySelector('input[name="source_mode"]:checked');
-  setMode(selectedMode ? selectedMode.value : "files");
+  updateTopicCount();
   loadOptions();
   startPolling();
 }
 
 function bindStatic() {
-  document.querySelectorAll('input[name="source_mode"]').forEach((input) => {
-    input.addEventListener("change", () => {
-      if (input.checked) setMode(input.value);
-    });
+  document.getElementById("topic").addEventListener("input", () => {
+    updateTopicCount();
+    setFieldError("source", "");
+  });
+  document.getElementById("research").addEventListener("change", () => {
+    setFieldError("source", "");
   });
   document.getElementById("books-toggle").addEventListener("click", toggleBooks);
   document.getElementById("brief-form").addEventListener("submit", onSubmit);
@@ -72,10 +76,10 @@ async function loadOptions() {
     state.books = Array.isArray(data.books) ? data.books : [];
     state.booksError = data.books_error || "";
     state.booksTruncated = Boolean(data.books_truncated);
-    state.voices = (Array.isArray(data.voices) ? data.voices : []).filter((name) => {
-      const fold = String(name).toLowerCase();
-      return fold !== "carter" && fold !== "hugh";
+    state.choices = voiceChoices(data).filter((choice) => {
+      return !NEVER_OFFER.has(String(choice.name).toLowerCase());
     });
+    state.voices = state.choices.filter((choice) => choice.ready).map((choice) => choice.name);
     state.selectedFiles = [];
     state.selectedVoices = [];
     state.dryRun = Boolean(data.dry_run);
@@ -99,7 +103,7 @@ async function loadOptions() {
     if (state.voices.length < 1) {
       setFieldError(
         "guest_voices",
-        "No guest voices are available. Check voices and banned_voices in config.json."
+        "No guest voices are available. Check voices, banned_voices, and not_ready_voices in config.json."
       );
       submit.disabled = true;
     } else if (!state.stopped) {
@@ -182,7 +186,7 @@ function booksHint() {
     state.books.length +
     " " +
     noun +
-    " on the shelf. Up to two. pdf, epub, txt, or md.";
+    " on the shelf. Optional, up to two. pdf, epub, txt, or md.";
   if (state.booksTruncated) text += " Showing the first 2000.";
   return text;
 }
@@ -191,7 +195,7 @@ function onBookToggle(box) {
   if (box.checked) {
     if (state.selectedFiles.length >= 2) {
       box.checked = false;
-      setFieldError("source", "Pick one or two books.");
+      setFieldError("source", "Pick at most two books.");
       return;
     }
     state.selectedFiles.push(box.value);
@@ -205,20 +209,51 @@ function onBookToggle(box) {
 function updateBooksSummary() {
   const summary = document.getElementById("books-summary");
   const count = state.selectedFiles.length;
-  if (count === 0) summary.textContent = "Choose up to two books";
+  if (count === 0) summary.textContent = "Optional: up to two books";
   else if (count === 1) summary.textContent = state.selectedFiles[0];
   else summary.textContent = state.selectedFiles[0] + " + " + (count - 1) + " more";
+}
+
+function voiceChoices(data) {
+  if (Array.isArray(data.voice_choices)) {
+    return data.voice_choices
+      .filter((choice) => choice && typeof choice.name === "string")
+      .map((choice) => ({
+        name: choice.name,
+        ready: choice.ready !== false,
+        note: typeof choice.note === "string" ? choice.note : "",
+      }));
+  }
+  return (Array.isArray(data.voices) ? data.voices : []).map((name) => ({
+    name: String(name),
+    ready: true,
+    note: "",
+  }));
 }
 
 function renderVoices() {
   const box = document.getElementById("voices");
   box.replaceChildren();
-  for (const name of state.voices) {
+  for (const choice of state.choices) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "voice";
-    button.dataset.voice = name;
-    button.textContent = name;
+    button.dataset.voice = choice.name;
+    if (!choice.ready) {
+      button.disabled = true;
+      button.classList.add("is-waiting");
+      button.title = choice.note;
+      const name = document.createElement("span");
+      name.className = "voice-name";
+      name.textContent = choice.name;
+      const note = document.createElement("span");
+      note.className = "voice-note";
+      note.textContent = choice.note;
+      button.append(name, note);
+      box.appendChild(button);
+      continue;
+    }
+    button.textContent = choice.name;
     button.setAttribute("aria-pressed", "false");
     button.addEventListener("click", () => onVoiceToggle(button));
     box.appendChild(button);
@@ -242,12 +277,9 @@ function onVoiceToggle(button) {
   setFieldError("guest_voices", "");
 }
 
-function setMode(mode) {
-  state.sourceMode = mode;
-  document.getElementById("files-panel").hidden = mode !== "files";
-  document.getElementById("theme-panel").hidden = mode !== "theme";
-  if (mode !== "files") closeBooks();
-  setFieldError("source", "");
+function updateTopicCount() {
+  const topic = document.getElementById("topic");
+  document.getElementById("topic-count").textContent = topic.value.length + "/600";
 }
 
 function toggleBooks() {
@@ -276,11 +308,12 @@ function selectedLength() {
 }
 
 function collectPayload() {
-  const themeInput = document.getElementById("theme").value.replace(/\s+/g, " ").trim();
+  const topic = document.getElementById("topic").value.replace(/\s+/g, " ").trim();
   return {
-    source_type: state.sourceMode,
-    files: state.sourceMode === "files" ? state.selectedFiles.slice() : [],
-    theme: state.sourceMode === "theme" ? themeInput : "",
+    topic: topic,
+    files: state.selectedFiles.slice(),
+    research: document.getElementById("research").checked,
+    content_style: document.getElementById("content_style").value,
     length_minutes: selectedLength(),
     guest_voices: state.selectedVoices.slice(),
     tone: document.getElementById("tone").value,
@@ -292,16 +325,16 @@ function collectPayload() {
 
 function clientErrors(payload) {
   const errors = {};
-  if (payload.source_type === "files") {
-    if (state.booksError) errors.source = "The books folder is not available.";
-    else if (payload.files.length < 1 || payload.files.length > 2) {
-      errors.source = "Pick one or two books.";
-    }
-  } else if (payload.source_type === "theme") {
-    if (!payload.theme) errors.source = "Enter a theme.";
-    else if (payload.theme.length > 240) errors.source = "Keep the theme under 240 characters.";
-  } else {
-    errors.source = "Choose books or a theme.";
+  if (!payload.topic) errors.source = "Enter a topic.";
+  else if (payload.topic.length > 600) errors.source = "Keep the topic under 600 characters.";
+  else if (payload.files.length > 2) errors.source = "Pick at most two books.";
+  else if (state.booksError && payload.files.length > 0) {
+    errors.source = "The books folder is not available.";
+  } else if (!payload.research && payload.files.length < 1) {
+    errors.source = "Attach a book or PDF, or turn on web research.";
+  }
+  if (!["v2.5", "v2.3"].includes(payload.content_style)) {
+    errors.content_style = "Choose a script style.";
   }
   if (payload.guest_voices.length < 1 || payload.guest_voices.length > 2) {
     errors.guest_voices = "Pick one or two guest voices.";
@@ -430,7 +463,19 @@ function renderStatus(data) {
     pre.textContent = "The status file is empty.";
     return;
   }
-  pre.textContent = data.truncated ? data.text + "\n\nShowing the first 16 KB." : data.text;
+  const text = formatStatusText(data.text);
+  pre.textContent = data.truncated ? text + "\n\nShowing the first 16 KB." : text;
+}
+
+function formatStatusText(text) {
+  return text
+    .split(/\r?\n/)
+    .map((line) => {
+      if (line.includes("ABORT research too thin")) return line;
+      if (/\bstep=gen research\b/.test(line)) return "Researching the web...";
+      return line;
+    })
+    .join("\n");
 }
 
 function markChecked() {

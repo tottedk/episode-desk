@@ -34,6 +34,7 @@ def make_config(root: Path, **overrides) -> AppConfig:
         "launcher_cmd": "& 'C:\\PodcastPipeline\\launch_episode.ps1' -BriefPath {brief_path}",
         "voices": ("Carter", "Hugh", "Elena", "Jonah", "Priya", "Maya"),
         "banned_voices": DEFAULT_BANNED_VOICES,
+        "not_ready_voices": (),
         "status_file": status,
     }
     values.update(overrides)
@@ -42,9 +43,10 @@ def make_config(root: Path, **overrides) -> AppConfig:
 
 def valid_payload(**overrides) -> dict:
     payload = {
-        "source_type": "files",
+        "topic": "On Lighthouses",
         "files": ["On Lighthouses.pdf"],
-        "theme": "",
+        "research": True,
+        "content_style": "v2.5",
         "length_minutes": 40,
         "guest_voices": ["Elena", "Jonah"],
         "tone": "calm",

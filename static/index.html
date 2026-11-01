@@ -14,7 +14,7 @@
       <div>
         <p class="eyebrow"><span class="lamp" aria-hidden="true"></span> Pre-roll</p>
         <h1>Episode desk</h1>
-        <p class="lede">Set the source, the voices, and the shape. The desk writes a brief and hands it to the pipeline on this PC.</p>
+        <p class="lede">Start with what the episode is about. Books are optional. The desk writes a brief and hands it to the pipeline on this PC.</p>
       </div>
       <button type="button" class="stop" id="stop-btn">Stop server</button>
     </div>
@@ -27,26 +27,38 @@
       <button type="button" class="ghost" id="retry-btn" hidden>Try again</button>
 
       <section class="field" id="field-source">
-        <h2>Source</h2>
-        <div class="segment" role="radiogroup" aria-label="Source">
-          <label><input type="radio" name="source_mode" value="files" checked> Books</label>
-          <label><input type="radio" name="source_mode" value="theme"> Theme</label>
+        <h2 id="topic-label">What's the episode about?</h2>
+        <textarea id="topic" name="topic" maxlength="600" rows="3" autocomplete="off" spellcheck="true" aria-labelledby="topic-label" placeholder="A question, a claim, or a prompt"></textarea>
+        <div class="topic-meta">
+          <p class="hint" id="topic-hint">A question or claim works best: 'AI is built on all of human knowledge: will it inherit our capacity for evil?'</p>
+          <p class="counter" id="topic-count">0/600</p>
         </div>
+        <h3 class="subhead">Optional books / PDFs (0-2)</h3>
         <div id="files-panel">
-          <p class="hint" id="books-hint">Up to two files. pdf, epub, txt, or md.</p>
+          <p class="hint" id="books-hint">Optional. Up to two files. pdf, epub, txt, or md.</p>
           <div class="dropdown" id="books-dropdown">
             <button type="button" class="dropdown-btn" id="books-toggle" aria-expanded="false" aria-controls="books-panel">
-              <span id="books-summary">Choose up to two books</span>
+              <span id="books-summary">Optional: up to two books</span>
               <span class="caret" aria-hidden="true"></span>
             </button>
             <div class="dropdown-panel" id="books-panel" hidden></div>
           </div>
         </div>
-        <div id="theme-panel" hidden>
-          <label for="theme">Theme</label>
-          <input id="theme" name="theme" type="text" maxlength="240" autocomplete="off" spellcheck="true" placeholder="A subject, with no source book">
-        </div>
+        <label class="check">
+          <input type="checkbox" id="research" name="research" checked>
+          Research the web
+        </label>
+        <p class="hint">On by default. If you turn this off, attach a book or PDF.</p>
         <p class="field-error" id="error-source" role="alert"></p>
+      </section>
+
+      <section class="field" id="field-content_style">
+        <label for="content_style">Script style</label>
+        <select id="content_style" name="content_style">
+          <option value="v2.5" selected>v2.5 — cast + short turns</option>
+          <option value="v2.3">v2.3 — legacy</option>
+        </select>
+        <p class="field-error" id="error-content_style" role="alert"></p>
       </section>
 
       <section class="field" id="field-length_minutes">
@@ -62,7 +74,7 @@
       <section class="field" id="field-guest_voices">
         <h2>Guest voices</h2>
         <p class="host-lock">Host <strong id="host-name">Carter</strong> <span>Always. Not a guest.</span></p>
-        <p class="hint">Pick one or two. Hugh is not listed. He is not paired with Carter.</p>
+        <p class="hint">Pick one or two ready voices. Hugh is not listed: he is not paired with Carter. Elliot is not listed: his Drama 3 voice is monotone. A dimmed name has no Drama 3 clip yet. Remove that name from <code>not_ready_voices</code> in config.json when the clip is added.</p>
         <div class="voices" id="voices" role="group" aria-label="Guest voices"></div>
         <p class="field-error" id="error-guest_voices" role="alert"></p>
       </section>

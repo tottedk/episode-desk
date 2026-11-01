@@ -32,8 +32,11 @@ from podcast_brief import (  # noqa: E402
     powershell_single_quote,
     read_status,
     render_launcher_command,
+    DEFAULT_NOT_READY_VOICES,
+    NOT_READY_NOTE,
     selectable_voices,
     slugify,
+    voice_choices,
     validate_payload,
     write_episode,
 )
@@ -65,14 +68,82 @@ class VoiceTests(unittest.TestCase):
         voices = selectable_voices(["Maya", "Hugh", "Carter", "Elena"], ())
         self.assertEqual(voices, ["Maya", "Elena"])
 
+    def test_elliot_is_not_selectable(self) -> None:
+        voices = selectable_voices(
+            ["Carter", "Elliot", "Clara", "Hugh", "elliot"],
+            (),
+        )
+        self.assertEqual(voices, ["Clara"])
+        self.assertNotIn("Elliot", voices)
+
+    def test_not_ready_voices_are_shown_but_not_selectable(self) -> None:
+        roster = [
+            "Carter",
+            "Clara",
+            "Lachlan",
+            "Isla",
+            "Marcus",
+            "Willa",
+            "Zara",
+            "Imogen",
+            "Frank",
+            "Samuel",
+            "Hugh",
+            "Elliot",
+            "Maya",
+        ]
+        waiting = ["Isla", "Marcus", "Willa", "Zara", "Imogen", "Frank", "Samuel", "Hugh", "Elliot"]
+        choices = voice_choices(roster, ["Maya"], waiting)
+        self.assertEqual(
+            [(choice["name"], choice["ready"]) for choice in choices],
+            [
+                ("Clara", True),
+                ("Lachlan", True),
+                ("Isla", False),
+                ("Marcus", False),
+                ("Willa", False),
+                ("Zara", False),
+                ("Imogen", False),
+                ("Frank", False),
+                ("Samuel", False),
+            ],
+        )
+        self.assertEqual(choices[2]["note"], NOT_READY_NOTE)
+        self.assertNotIn("note", choices[0])
+        self.assertEqual(
+            selectable_voices(roster, ["Maya"], waiting),
+            ["Clara", "Lachlan"],
+        )
+
+    def test_empty_not_ready_list_enables_the_roster(self) -> None:
+        voices = selectable_voices(
+            ["Clara", "Isla", "Frank"],
+            (),
+            (),
+        )
+        self.assertEqual(voices, ["Clara", "Isla", "Frank"])
+
     def test_example_config_voice_rules(self) -> None:
         config = load_config(ROOT / "config.example.json")
-        voices = selectable_voices(config.voices, config.banned_voices)
+        voices = selectable_voices(
+            config.voices, config.banned_voices, config.not_ready_voices
+        )
+        self.assertEqual(voices, ["Clara", "Lachlan"])
+        choices = voice_choices(
+            config.voices, config.banned_voices, config.not_ready_voices
+        )
+        self.assertEqual(
+            [choice["name"] for choice in choices if choice["ready"] is not True],
+            ["Isla", "Marcus", "Willa", "Zara", "Imogen", "Frank", "Samuel"],
+        )
         folds = {voice.casefold() for voice in voices}
         self.assertNotIn("carter", folds)
         self.assertNotIn("hugh", folds)
+        self.assertNotIn("elliot", folds)
         for banned in ("maya", "declan", "alice", "mary"):
             self.assertNotIn(banned, folds)
+        self.assertNotIn("Elliot", config.voices)
+        self.assertEqual(config.not_ready_voices, DEFAULT_NOT_READY_VOICES)
         self.assertGreaterEqual(len(voices), 2)
         self.assertIn("{brief_path}", config.launcher_cmd)
         rendered = render_launcher_command(
@@ -109,6 +180,7 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(config.briefs_dir, (root / "briefs").resolve())
             self.assertEqual(config.status_file, (root / "status.txt").resolve())
             self.assertEqual(config.banned_voices, DEFAULT_BANNED_VOICES)
+            self.assertEqual(config.not_ready_voices, DEFAULT_NOT_READY_VOICES)
 
     def test_explicit_empty_ban_list(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -247,12 +319,12 @@ class ValidationTests(unittest.TestCase):
             (self.config.books_dir / "On Lighthouses.pdf").resolve(),
         )
 
-    def test_theme_mode(self) -> None:
+    def test_topic_only(self) -> None:
         episode, errors = validate_payload(
             support.valid_payload(
-                source_type="theme",
                 files=[],
-                theme="  How   Fresnel lenses\nchanged the coast  ",
+                topic="  How   Fresnel lenses\nchanged the coast  ",
+                research=True,
                 guest_voices=["elena"],
                 quiz=False,
                 length_minutes=20,
@@ -264,10 +336,151 @@ class ValidationTests(unittest.TestCase):
         )
         self.assertEqual(errors, {})
         assert episode is not None
-        self.assertEqual(episode.theme, "How Fresnel lenses changed the coast")
+        self.assertEqual(episode.topic, "How Fresnel lenses changed the coast")
+        self.assertEqual(episode.files, ())
+        self.assertTrue(episode.research)
+        self.assertEqual(episode.content_style, "v2.5")
         self.assertEqual(episode.guest_voices, ("Elena",))
         self.assertEqual(episode.notes, "")
         self.assertFalse(episode.quiz)
+        self.assertFalse(hasattr(episode, "theme"))
+        self.assertFalse(hasattr(episode, "source_type"))
+
+    def test_topic_and_two_books(self) -> None:
+        episode, errors = validate_payload(
+            support.valid_payload(
+                topic="How the lamp changed the coast",
+                files=["On Lighthouses.pdf", "Coast Notes.txt"],
+                research=True,
+            ),
+            self.config,
+        )
+        self.assertEqual(errors, {})
+        assert episode is not None
+        self.assertEqual(episode.topic, "How the lamp changed the coast")
+        self.assertEqual(
+            [path.name for path in episode.files],
+            ["On Lighthouses.pdf", "Coast Notes.txt"],
+        )
+        self.assertTrue(episode.research)
+
+    def test_topic_length_bounds(self) -> None:
+        episode, errors = validate_payload(
+            support.valid_payload(topic="a" * 600),
+            self.config,
+        )
+        self.assertEqual(errors, {})
+        assert episode is not None
+        self.assertEqual(episode.topic, "a" * 600)
+        self.assertEqual(len(episode.topic), 600)
+
+        episode, errors = validate_payload(
+            support.valid_payload(topic="b" * 601),
+            self.config,
+        )
+        self.assertIsNone(episode)
+        self.assertIn("600", errors["source"])
+
+    def test_research_off_needs_a_file(self) -> None:
+        omitted = support.valid_payload(files=[])
+        del omitted["research"]
+        episode, errors = validate_payload(omitted, self.config)
+        self.assertEqual(errors, {})
+        assert episode is not None
+        self.assertTrue(episode.research)
+        self.assertEqual(episode.files, ())
+
+        episode, errors = validate_payload(
+            support.valid_payload(research=False, files=[]),
+            self.config,
+        )
+        self.assertIsNone(episode)
+        self.assertEqual(
+            errors["source"],
+            "Attach a book or PDF, or turn on web research.",
+        )
+
+        episode, errors = validate_payload(
+            support.valid_payload(research=False, files=["Coast Notes.txt"]),
+            self.config,
+        )
+        self.assertEqual(errors, {})
+        assert episode is not None
+        self.assertFalse(episode.research)
+        self.assertEqual(episode.files[0].name, "Coast Notes.txt")
+
+        episode, errors = validate_payload(
+            support.valid_payload(research="web"),
+            self.config,
+        )
+        self.assertIsNone(episode)
+        self.assertIn("source", errors)
+
+    def test_content_style_default_and_invalid(self) -> None:
+        payload = support.valid_payload()
+        del payload["content_style"]
+        episode, errors = validate_payload(payload, self.config)
+        self.assertEqual(errors, {})
+        assert episode is not None
+        self.assertEqual(episode.content_style, "v2.5")
+
+        episode, errors = validate_payload(
+            support.valid_payload(content_style="v2.3"),
+            self.config,
+        )
+        self.assertEqual(errors, {})
+        assert episode is not None
+        self.assertEqual(episode.content_style, "v2.3")
+
+        for bad_value in ("v2.4", "V2.5", "", None):
+            with self.subTest(content_style=bad_value):
+                episode, errors = validate_payload(
+                    support.valid_payload(content_style=bad_value),
+                    self.config,
+                )
+                self.assertIsNone(episode)
+                self.assertEqual(errors["content_style"], "Choose a script style.")
+
+    def test_elliot_is_rejected_even_when_configured(self) -> None:
+        config = support.make_config(
+            Path(self.tmp.name) / "with-elliot",
+            voices=("Carter", "Hugh", "Elliot", "Elena", "Jonah", "Maya"),
+        )
+        offered = selectable_voices(config.voices, config.banned_voices)
+        self.assertEqual(offered, ["Elena", "Jonah"])
+        episode, errors = validate_payload(
+            support.valid_payload(guest_voices=["Elliot"]),
+            config,
+        )
+        self.assertIsNone(episode)
+        self.assertEqual(errors["guest_voices"], "That voice isn't available.")
+
+    def test_not_ready_voice_cannot_be_submitted(self) -> None:
+        config = support.make_config(
+            Path(self.tmp.name) / "waiting",
+            voices=("Carter", "Clara", "Lachlan", "Isla", "Frank"),
+            banned_voices=(),
+            not_ready_voices=("isla", "Frank"),
+        )
+        episode, errors = validate_payload(
+            support.valid_payload(guest_voices=["Isla"]),
+            config,
+        )
+        self.assertIsNone(episode)
+        self.assertEqual(errors["guest_voices"], "Isla isn't ready for Drama 3 yet.")
+        episode, errors = validate_payload(
+            support.valid_payload(guest_voices=["Clara", "Frank"]),
+            config,
+        )
+        self.assertIsNone(episode)
+        self.assertIn("Frank", errors["guest_voices"])
+        episode, errors = validate_payload(
+            support.valid_payload(guest_voices=["Clara", "Lachlan"]),
+            config,
+        )
+        self.assertEqual(errors, {})
+        assert episode is not None
+        self.assertEqual(episode.guest_voices, ("Clara", "Lachlan"))
 
     def test_defaults_when_length_and_quiz_omitted(self) -> None:
         payload = support.valid_payload()
@@ -281,17 +494,28 @@ class ValidationTests(unittest.TestCase):
 
     def test_rejects_bad_fields(self) -> None:
         cases = [
-            ({"files": []}, "source"),
+            ({"topic": ""}, "source"),
+            ({"topic": "   "}, "source"),
+            ({"topic": "c" * 601}, "source"),
             ({"files": ["a.pdf", "b.txt", "c.md"]}, "source"),
+            (
+                {
+                    "files": [
+                        "On Lighthouses.pdf",
+                        "Coast Notes.txt",
+                        "more/Fog.md",
+                    ]
+                },
+                "source",
+            ),
             ({"files": ["../secret.txt"]}, "source"),
             ({"files": ["..\\secret.txt"]}, "source"),
             ({"files": ["/etc/passwd"]}, "source"),
             ({"files": ["C:/Windows/win.ini"]}, "source"),
             ({"files": ["skip.exe"]}, "source"),
             ({"files": ["On Lighthouses.pdf", "On Lighthouses.pdf"]}, "source"),
-            ({"theme": "also a theme"}, "source"),
-            ({"source_type": "theme", "files": ["On Lighthouses.pdf"], "theme": "Fog"}, "source"),
-            ({"source_type": "theme", "files": [], "theme": "   "}, "source"),
+            ({"research": False, "files": []}, "source"),
+            ({"guest_voices": ["Elliot"]}, "guest_voices"),
             ({"guest_voices": []}, "guest_voices"),
             ({"guest_voices": ["Elena", "Jonah", "Priya"]}, "guest_voices"),
             ({"guest_voices": ["Carter"]}, "guest_voices"),
@@ -362,6 +586,7 @@ class BriefWriteTests(unittest.TestCase):
                 "id",
                 "created_at",
                 "source",
+                "content_style",
                 "length_minutes",
                 "host",
                 "guest_voices",
@@ -372,7 +597,7 @@ class BriefWriteTests(unittest.TestCase):
                 "notes",
             ],
         )
-        self.assertEqual(brief["schema_version"], 1)
+        self.assertEqual(brief["schema_version"], 2)
         self.assertEqual(brief["created_at"], "2026-10-25T14:30:12-04:00")
         self.assertEqual(datetime.fromisoformat(brief["created_at"]), NOW)
         self.assertEqual(brief["host"], HOST_VOICE)
@@ -380,8 +605,19 @@ class BriefWriteTests(unittest.TestCase):
         self.assertEqual(brief["tts"]["fallback"], TTS_FALLBACK)
         self.assertEqual(brief["tts"]["engine"], "Fish Audio Drama 3")
         self.assertEqual(brief["tts"]["fallback"], "VibeVoice-7B")
-        self.assertEqual(brief["source"]["type"], "files")
-        self.assertIsNone(brief["source"]["theme"])
+        self.assertEqual(
+            list(brief["source"].keys()),
+            ["type", "topic", "files", "research"],
+        )
+        self.assertEqual(brief["source"]["type"], "topic")
+        self.assertEqual(brief["source"]["topic"], "On Lighthouses")
+        self.assertEqual(brief["source"]["research"], "web")
+        self.assertEqual(brief["content_style"], "v2.5")
+        self.assertNotIn("theme", brief["source"])
+        self.assertEqual(
+            brief["source"]["files"],
+            [str((self.config.books_dir / "On Lighthouses.pdf").resolve())],
+        )
         self.assertEqual(brief["guest_voices"], ["Elena", "Jonah"])
         self.assertEqual(brief["length_minutes"], 40)
         self.assertEqual(brief["tone"], "calm")
@@ -390,21 +626,31 @@ class BriefWriteTests(unittest.TestCase):
         self.assertTrue(str(path).endswith(".json"))
         self.assertNotIn("not the real engine", path.read_text(encoding="utf-8"))
 
-    def test_theme_brief_slug(self) -> None:
+    def test_topic_brief_slug(self) -> None:
         episode, errors = validate_payload(
             support.valid_payload(
-                source_type="theme",
-                files=[],
-                theme="How Fresnel lenses changed the coast",
+                files=["Coast Notes.txt", "more/Fog.md"],
+                topic="How Fresnel lenses changed the coast",
+                research=False,
+                content_style="v2.3",
             ),
             self.config,
         )
         assert episode is not None and not errors
         brief, path = write_episode(self.config, episode, now=NOW)
         self.assertEqual(path.name, "brief_how-fresnel-lenses-changed-the-coast_20261025_143012.json")
-        self.assertEqual(brief["source"]["type"], "theme")
-        self.assertEqual(brief["source"]["files"], [])
-        self.assertEqual(brief["source"]["theme"], "How Fresnel lenses changed the coast")
+        self.assertEqual(brief["source"]["type"], "topic")
+        self.assertEqual(brief["source"]["topic"], "How Fresnel lenses changed the coast")
+        self.assertEqual(brief["source"]["research"], "none")
+        self.assertEqual(brief["content_style"], "v2.3")
+        self.assertEqual(
+            brief["source"]["files"],
+            [
+                str((self.config.books_dir / "Coast Notes.txt").resolve()),
+                str((self.config.books_dir / "more" / "Fog.md").resolve()),
+            ],
+        )
+        self.assertNotIn("theme", brief)
 
     def test_collision_gets_a_suffix(self) -> None:
         episode, _ = validate_payload(support.valid_payload(), self.config)

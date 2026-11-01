@@ -6,16 +6,39 @@ Episode desk is a local page for writing a podcast brief and handing it to a pip
 - [x] Listens on `127.0.0.1` only. `server.py` has no wildcard bind.
 - [x] Manual start: `start_ui.ps1` runs the server in that window and opens the browser. Close the window, or use **Stop server**. No service, startup item, or scheduled task.
 - [x] `config.example.json` is the committed sample, with dummy `C:\PodcastPipeline` paths. `config.json` is gitignored. No secrets in the repo.
-- [x] Source is up to two shelf files (pdf, epub, txt, md) or a theme.
+- [x] The episode starts with a required topic (a question, claim, or prompt, up to 600 characters). Books are optional, 0 to 2, and can be used with the topic. Web research is on by default. Turning it off requires a book or PDF. Script style is v2.5 by default, or v2.3.
 - [x] Length is 20, 30, or 40 minutes, default 40.
-- [x] One or two guest voices. Carter is always the host and is not a guest. Hugh is never selectable. `banned_voices` defaults to Maya, Declan, Alice, Mary when the key is omitted.
+- [x] One or two guest voices. Carter is always the host and is not a guest. Hugh is never selectable. Elliot is never selectable (monotone Drama 3 voice) and is not in the sample roster. `banned_voices` defaults to Maya, Declan, Alice, Mary when the key is omitted. Clara and Lachlan are the ready guests. Isla, Marcus, Willa, Zara, Imogen, Frank, and Samuel are listed in `not_ready_voices` and shown disabled ("voice not ready for Drama 3 yet") until that config list drops them.
+- [x] Briefs are schema 2: `source.type` is `topic`, `source.research` is `web` or `none`, and `content_style` is `v2.5` or `v2.3`. The slug comes from the topic. Older briefs already on disk are left alone.
 - [x] Tone, depth, quiz, optional notes.
 - [x] Speech is fixed: Fish Audio Drama 3, fallback VibeVoice-7B. The page has no control for it, and a client-supplied engine is ignored.
 - [x] Submit validates, writes `brief_<slug>_<timestamp>.json`, and starts `launcher_cmd`. On Windows the flags are `CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP` (`0x08000200`). `DETACHED_PROCESS` is not used. Still running, or exit code 0 within about 2 seconds, counts as launched. A non-zero exit in that window is a failure and the message includes the code. The brief is kept. `--dry-run` / `-DryRun` writes the brief and does not launch.
 - [x] Status panel reads `status_file` on load and every 10 seconds.
 - [x] Unittest coverage for validation, brief writing, the launcher, and the loopback bind.
 
-## Verification
+## Topic-first briefs
+
+Unit tests, from the repo root on Python 3.12.3:
+
+```text
+python3 -m unittest discover -s tests -v
+```
+
+Result: **62 tests, OK**.
+
+Live server, dry run, port 47221, using the sample roster (Clara, Lachlan, Isla, Marcus, Willa, Zara, Imogen, Frank, Samuel, plus Carter, Hugh, and the banned names). Elliot is not in the roster.
+
+- `GET /api/options` offers Clara and Lachlan as ready guests. Isla, Marcus, Willa, Zara, Imogen, Frank, and Samuel are in `voice_choices` with `ready: false` and the note "voice not ready for Drama 3 yet". Carter, Hugh, Elliot, Maya, Declan, Alice, and Mary are absent. `skip.exe` was not on the shelf.
+- The page opens on **What's the episode about?**, with the counter at 0/600. **Research the web** is checked. Script style is v2.5.
+- An empty submit showed errors for the topic, guests, tone, and depth.
+- A topic with research turned off and no book showed "Attach a book or PDF, or turn on web research."
+- A third book and a third guest would not stay selected.
+- Submitting the topic "AI is built on all of human knowledge: will it inherit our capacity for evil?", Coast Notes.txt, On Lighthouses.pdf, Clara, Lachlan, debate, standard, and script style v2.5 wrote a schema 2 brief. `source.type` is `topic`, `source.research` is `web`, `content_style` is `v2.5`, `host` is Carter, and the engine is Fish Audio Drama 3. The page said the pipeline was not started.
+- A status line `step=gen research ...` is shown as "Researching the web...". `ABORT research too thin` is shown unchanged.
+- On the page, Clara and Lachlan can be selected. Isla, Marcus, Willa, Zara, Imogen, Frank, and Samuel are disabled, each with the note "voice not ready for Drama 3 yet". Clicking Isla does not select her.
+- At about 390px wide the form sits above the status panel and the submit button spans the form.
+
+## Earlier verification (books or a theme)
 
 Unit tests, from the repo root on Python 3.12.3:
 

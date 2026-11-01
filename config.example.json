@@ -4,18 +4,22 @@
   "launcher_cmd": "& 'C:\\PodcastPipeline\\launch_episode.ps1' -BriefPath {brief_path}",
   "voices": [
     "Carter",
+    "Clara",
+    "Lachlan",
+    "Isla",
+    "Marcus",
+    "Willa",
+    "Zara",
+    "Imogen",
+    "Frank",
+    "Samuel",
     "Hugh",
-    "Elena",
-    "Jonah",
-    "Priya",
-    "Sam",
-    "Noah",
-    "Ruth",
     "Maya",
     "Declan",
     "Alice",
     "Mary"
   ],
   "banned_voices": ["Maya", "Declan", "Alice", "Mary"],
+  "not_ready_voices": ["Isla", "Marcus", "Willa", "Zara", "Imogen", "Frank", "Samuel"],
   "status_file": "C:\\PodcastPipeline\\status.txt"
 }

@@ -33,8 +33,10 @@ from podcast_brief import (
     list_books,
     load_config,
     read_status,
+    NOT_READY_NOTE,
     selectable_voices,
     validate_payload,
+    voice_choices,
     write_episode,
 )
 
@@ -306,7 +308,13 @@ def _options_payload(app: App) -> dict:
         "books": books,
         "books_error": books_error,
         "books_truncated": truncated,
-        "voices": selectable_voices(config.voices, config.banned_voices),
+        "voices": selectable_voices(
+            config.voices, config.banned_voices, config.not_ready_voices
+        ),
+        "voice_choices": voice_choices(
+            config.voices, config.banned_voices, config.not_ready_voices
+        ),
+        "not_ready_note": NOT_READY_NOTE,
         "host": HOST_VOICE,
         "lengths": list(LENGTH_MINUTES),
         "default_length": DEFAULT_LENGTH_MINUTES,
