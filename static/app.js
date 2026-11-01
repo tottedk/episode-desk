@@ -9,7 +9,6 @@ const ERROR_KEYS = [
   "depth",
   "length_minutes",
   "notes",
-  "quiz",
 ];
 
 const NEVER_OFFER = new Set(["carter", "hugh", "elliot"]);
@@ -318,7 +317,6 @@ function collectPayload() {
     guest_voices: state.selectedVoices.slice(),
     tone: document.getElementById("tone").value,
     depth: document.getElementById("depth").value,
-    quiz: document.querySelector('input[name="quiz"]:checked').value === "yes",
     notes: document.getElementById("notes").value,
   };
 }

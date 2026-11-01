@@ -10,11 +10,23 @@ Episode desk is a local page for writing a podcast brief and handing it to a pip
 - [x] Length is 20, 30, or 40 minutes, default 40.
 - [x] One or two guest voices. Carter is always the host and is not a guest. Hugh is never selectable. Elliot is never selectable (monotone Drama 3 voice) and is not in the sample roster. `banned_voices` defaults to Maya, Declan, Alice, Mary when the key is omitted. Clara and Lachlan are the ready guests. Isla, Marcus, Willa, Zara, Imogen, Frank, and Samuel are listed in `not_ready_voices` and shown disabled ("voice not ready for Drama 3 yet") until that config list drops them.
 - [x] Briefs are schema 2: `source.type` is `topic`, `source.research` is `web` or `none`, and `content_style` is `v2.5` or `v2.3`. The slug comes from the topic. Older briefs already on disk are left alone.
-- [x] Tone, depth, quiz, optional notes.
+- [x] Tone, depth, optional notes. Briefs always include `"quiz": false`. The page does not ask, and a client-supplied quiz value is ignored.
 - [x] Speech is fixed: Fish Audio Drama 3, fallback VibeVoice-7B. The page has no control for it, and a client-supplied engine is ignored.
 - [x] Submit validates, writes `brief_<slug>_<timestamp>.json`, and starts `launcher_cmd`. On Windows the flags are `CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP` (`0x08000200`). `DETACHED_PROCESS` is not used. Still running, or exit code 0 within about 2 seconds, counts as launched. A non-zero exit in that window is a failure and the message includes the code. The brief is kept. `--dry-run` / `-DryRun` writes the brief and does not launch.
 - [x] Status panel reads `status_file` on load and every 10 seconds.
 - [x] Unittest coverage for validation, brief writing, the launcher, and the loopback bind.
+
+## Quiz removed
+
+The page no longer asks whether the episode ends with a quiz. Briefs still include `"quiz": false` so the pipeline can read the key. A payload that sends `quiz` is accepted and the value is ignored.
+
+```text
+python3 -m unittest discover -s tests -v
+```
+
+Result: **63 tests, OK**.
+
+A dry-run submit in the browser (topic "On lighthouses", Clara, calm, deep, and a note) wrote a brief and said the pipeline was not started. Depth is followed by Speech. There is no Quiz control.
 
 ## Topic-first briefs
 

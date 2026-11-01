@@ -1,6 +1,6 @@
 # Episode desk
 
-Episode desk is a small local page for setting up a podcast episode before a pipeline on the same Windows PC generates it. You start with what the episode is about, then the length, one or two guest voices, the tone, the depth, and whether the episode ends with a quiz. Books are optional. The desk writes a brief JSON file and starts the pipeline with that file. It does not generate audio itself.
+Episode desk is a small local page for setting up a podcast episode before a pipeline on the same Windows PC generates it. You start with what the episode is about, then the length, one or two guest voices, the tone, and the depth. Books are optional. The desk writes a brief JSON file and starts the pipeline with that file. It does not generate audio itself.
 
 Carter hosts every episode. The speech engine is fixed: **Fish Audio Drama 3**, with **VibeVoice-7B** noted only as a fallback. The desk cannot switch engines.
 
@@ -116,7 +116,6 @@ On Windows the process is created with `CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GR
 - **Guest voices.** 1 or 2 ready names, under the rules above. Guests without a Drama 3 clip are on the page and disabled.
 - **Tone.** calm, playful, debate, or serious.
 - **Depth.** intro, standard, or deep.
-- **Quiz.** yes or no. Default no.
 - **Speech.** Fish Audio Drama 3, fallback VibeVoice-7B. Not editable.
 - **Notes.** Optional, up to 4000 characters.
 
@@ -175,12 +174,12 @@ The desk writes schema 2 only. Briefs already sitting in the briefs folder are n
 | `guest_voices` | One or two names from the selectable list. |
 | `tone` | `calm`, `playful`, `debate`, or `serious`. |
 | `depth` | `intro`, `standard`, or `deep`. |
-| `quiz` | Boolean. |
+| `quiz` | Always `false`. The desk does not ask. A value sent by the client is ignored. The pipeline still reads the key. |
 | `tts.engine` | Always `Fish Audio Drama 3`. |
 | `tts.fallback` | Always `VibeVoice-7B`. The pipeline may use it only as a fallback. |
 | `notes` | String. May be empty. |
 
-Anything the browser sends for `host` or `tts` is ignored. The server writes the fixed values. The status panel reads the pipeline status file as plain text. A line containing `step=gen research` is shown as "Researching the web...". A line containing `ABORT research too thin` is shown unchanged.
+Anything the browser sends for `host`, `tts`, or `quiz` is ignored. The server writes the fixed values, including `"quiz": false`. The status panel reads the pipeline status file as plain text. A line containing `step=gen research` is shown as "Researching the web...". A line containing `ABORT research too thin` is shown unchanged.
 
 ## HTTP
 

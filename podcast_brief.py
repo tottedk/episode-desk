@@ -107,7 +107,6 @@ class EpisodeRequest:
     guest_voices: tuple[str, ...]
     tone: str
     depth: str
-    quiz: bool
     notes: str
 
 
@@ -298,10 +297,6 @@ def validate_payload(
     if depth_error:
         errors["depth"] = depth_error
 
-    quiz, quiz_error = _clean_quiz(payload)
-    if quiz_error:
-        errors["quiz"] = quiz_error
-
     notes, notes_error = _clean_notes(payload.get("notes", ""))
     if notes_error:
         errors["notes"] = notes_error
@@ -315,7 +310,6 @@ def validate_payload(
         or guests is None
         or tone is None
         or depth is None
-        or quiz is None
         or notes is None
     ):
         return None, errors or {"form": "The brief could not be validated."}
@@ -330,7 +324,6 @@ def validate_payload(
             guest_voices=guests,
             tone=tone,
             depth=depth,
-            quiz=quiz,
             notes=notes,
         ),
         {},
@@ -347,7 +340,7 @@ def slugify(text: str) -> str:
 
 
 def build_brief(episode: EpisodeRequest, *, brief_id: str, now: datetime) -> dict:
-    """Build the brief document. Host and TTS are fixed here, not taken from the form."""
+    """Build the brief document. Host, TTS, and quiz are fixed here, not taken from the form."""
     if now.tzinfo is None:
         raise BriefIOError("Brief timestamps need a timezone.")
     source: dict[str, object] = {
@@ -367,7 +360,7 @@ def build_brief(episode: EpisodeRequest, *, brief_id: str, now: datetime) -> dic
         "guest_voices": list(episode.guest_voices),
         "tone": episode.tone,
         "depth": episode.depth,
-        "quiz": episode.quiz,
+        "quiz": False,
         "tts": {
             "engine": TTS_ENGINE,
             "fallback": TTS_FALLBACK,
@@ -654,15 +647,6 @@ def _clean_length(payload: dict) -> tuple[int | None, str | None]:
     if isinstance(length, bool) or not isinstance(length, int) or length not in LENGTH_MINUTES:
         return None, "Length must be 20, 30, or 40 minutes."
     return length, None
-
-
-def _clean_quiz(payload: dict) -> tuple[bool | None, str | None]:
-    if "quiz" not in payload or payload["quiz"] is None:
-        return False, None
-    quiz = payload["quiz"]
-    if not isinstance(quiz, bool):
-        return None, "Quiz must be yes or no."
-    return quiz, None
 
 
 def _clean_choice(

@@ -313,7 +313,7 @@ class ValidationTests(unittest.TestCase):
         assert episode is not None
         self.assertEqual(episode.guest_voices, ("Elena", "Jonah"))
         self.assertEqual(episode.length_minutes, 40)
-        self.assertTrue(episode.quiz)
+        self.assertFalse(hasattr(episode, "quiz"))
         self.assertEqual(
             episode.files[0],
             (self.config.books_dir / "On Lighthouses.pdf").resolve(),
@@ -326,7 +326,6 @@ class ValidationTests(unittest.TestCase):
                 topic="  How   Fresnel lenses\nchanged the coast  ",
                 research=True,
                 guest_voices=["elena"],
-                quiz=False,
                 length_minutes=20,
                 tone="debate",
                 depth="intro",
@@ -342,7 +341,6 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(episode.content_style, "v2.5")
         self.assertEqual(episode.guest_voices, ("Elena",))
         self.assertEqual(episode.notes, "")
-        self.assertFalse(episode.quiz)
         self.assertFalse(hasattr(episode, "theme"))
         self.assertFalse(hasattr(episode, "source_type"))
 
@@ -482,15 +480,39 @@ class ValidationTests(unittest.TestCase):
         assert episode is not None
         self.assertEqual(episode.guest_voices, ("Clara", "Lachlan"))
 
-    def test_defaults_when_length_and_quiz_omitted(self) -> None:
+    def test_defaults_when_length_omitted(self) -> None:
         payload = support.valid_payload()
         del payload["length_minutes"]
-        del payload["quiz"]
         episode, errors = validate_payload(payload, self.config)
         self.assertEqual(errors, {})
         assert episode is not None
         self.assertEqual(episode.length_minutes, 40)
-        self.assertFalse(episode.quiz)
+
+    def test_client_quiz_is_ignored(self) -> None:
+        sent = (
+            {"quiz": True},
+            {"quiz": False},
+            {"quiz": "yes"},
+            {"quiz": "no"},
+            {"quiz": None},
+            {"quiz": 1},
+        )
+        for overrides in sent:
+            with self.subTest(overrides=overrides):
+                episode, errors = validate_payload(
+                    support.valid_payload(**overrides), self.config
+                )
+                self.assertEqual(errors, {})
+                assert episode is not None
+                brief, _path = write_episode(self.config, episode, now=NOW)
+                self.assertIs(brief["quiz"], False)
+        payload = support.valid_payload()
+        self.assertNotIn("quiz", payload)
+        episode, errors = validate_payload(payload, self.config)
+        self.assertEqual(errors, {})
+        assert episode is not None
+        brief, _path = write_episode(self.config, episode, now=NOW)
+        self.assertIs(brief["quiz"], False)
 
     def test_rejects_bad_fields(self) -> None:
         cases = [
@@ -530,7 +552,6 @@ class ValidationTests(unittest.TestCase):
             ({"tone": "Calm"}, "tone"),
             ({"tone": ""}, "tone"),
             ({"depth": "expert"}, "depth"),
-            ({"quiz": "yes"}, "quiz"),
             ({"notes": "x" * 4001}, "notes"),
         ]
         for overrides, field in cases:
@@ -622,7 +643,7 @@ class BriefWriteTests(unittest.TestCase):
         self.assertEqual(brief["length_minutes"], 40)
         self.assertEqual(brief["tone"], "calm")
         self.assertEqual(brief["depth"], "deep")
-        self.assertTrue(brief["quiz"])
+        self.assertIs(brief["quiz"], False)
         self.assertTrue(str(path).endswith(".json"))
         self.assertNotIn("not the real engine", path.read_text(encoding="utf-8"))
 
