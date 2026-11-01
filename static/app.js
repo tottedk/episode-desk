@@ -17,6 +17,9 @@ const state = {
   books: [],
   booksError: "",
   booksTruncated: false,
+  libraryEnabled: true,
+  maxUploadBytes: 200 * 1024 * 1024,
+  uploading: false,
   voices: [],
   choices: [],
   selectedFiles: [],
@@ -44,6 +47,7 @@ function bindStatic() {
     setFieldError("source", "");
   });
   document.getElementById("books-toggle").addEventListener("click", toggleBooks);
+  document.getElementById("book-upload").addEventListener("change", onUploadChosen);
   document.getElementById("brief-form").addEventListener("submit", onSubmit);
   document.getElementById("stop-btn").addEventListener("click", onStop);
   document.getElementById("check-now").addEventListener("click", () => {
@@ -75,6 +79,8 @@ async function loadOptions() {
     state.books = Array.isArray(data.books) ? data.books : [];
     state.booksError = data.books_error || "";
     state.booksTruncated = Boolean(data.books_truncated);
+    state.libraryEnabled = data.library_enabled !== false;
+    state.maxUploadBytes = Number(data.max_upload_bytes) || 200 * 1024 * 1024;
     state.choices = voiceChoices(data).filter((choice) => {
       return !NEVER_OFFER.has(String(choice.name).toLowerCase());
     });
@@ -83,27 +89,20 @@ async function loadOptions() {
     state.selectedVoices = [];
     state.dryRun = Boolean(data.dry_run);
     document.getElementById("host-name").textContent = data.host || "Carter";
-    document.getElementById("meta-books").textContent = data.books_dir || "";
+    document.getElementById("meta-books").textContent = state.libraryEnabled
+      ? data.books_dir || ""
+      : "off";
     document.getElementById("meta-briefs").textContent = data.briefs_dir || "";
     document.getElementById("status-path").textContent = data.status_file || "";
     const ribbon = document.getElementById("dry-run-ribbon");
     ribbon.hidden = !state.dryRun;
-    if (state.dryRun) {
-      submit.textContent = "Write brief";
-      document.getElementById("submit-hint").textContent =
-        "Dry run. The pipeline will not be started.";
-    } else {
-      submit.textContent = "Write brief and launch";
-      document.getElementById("submit-hint").textContent =
-        "Writes a brief, then starts the pipeline.";
-    }
+    if (state.dryRun) submit.textContent = "Write brief";
+    else submit.textContent = "Write brief and launch";
+    document.getElementById("submit-hint").textContent = "";
     renderBooks();
     renderVoices();
     if (state.voices.length < 1) {
-      setFieldError(
-        "guest_voices",
-        "No guest voices are available. Check voices, banned_voices, and not_ready_voices in config.json."
-      );
+      setFieldError("guest_voices", "No guest voices are available.");
       submit.disabled = true;
     } else if (!state.stopped) {
       submit.disabled = false;
@@ -116,9 +115,17 @@ async function loadOptions() {
 function renderBooks() {
   const panel = document.getElementById("books-panel");
   const hint = document.getElementById("books-hint");
+  const dropdown = document.getElementById("books-dropdown");
+  dropdown.hidden = !state.libraryEnabled;
   panel.replaceChildren();
   hint.textContent = booksHint();
-  hint.classList.toggle("is-bad", Boolean(state.booksError));
+  hint.classList.toggle("is-bad", Boolean(state.booksError) && state.libraryEnabled);
+  if (!state.libraryEnabled) {
+    closeBooks();
+    renderPicked();
+    syncUpload();
+    return;
+  }
 
   const filter = document.createElement("input");
   filter.type = "search";
@@ -138,9 +145,10 @@ function renderBooks() {
     empty.className = "empty";
     empty.textContent = state.booksError
       ? "The shelf could not be read."
-      : "No pdf, epub, txt, or md files in the books folder.";
+      : "No pdf, epub, txt, or md files in the library.";
     panel.appendChild(empty);
-    updateBooksSummary();
+    renderPicked();
+    syncUpload();
     return;
   }
 
@@ -152,6 +160,7 @@ function renderBooks() {
     const box = document.createElement("input");
     box.type = "checkbox";
     box.value = book.rel;
+    box.checked = state.selectedFiles.some((item) => item.rel === book.rel);
     box.addEventListener("change", () => onBookToggle(box));
     const name = document.createElement("span");
     name.textContent = book.rel;
@@ -175,17 +184,16 @@ function renderBooks() {
     }
     noMatch.hidden = visible !== 0;
   });
-  updateBooksSummary();
+  renderPicked();
+  syncUpload();
 }
 
 function booksHint() {
+  const formats = "PDF, EPUB, TXT, or MD. Up to 200 MB.";
+  if (!state.libraryEnabled) return "Library is off. " + formats;
   if (state.booksError) return state.booksError;
   const noun = state.books.length === 1 ? "file" : "files";
-  let text =
-    state.books.length +
-    " " +
-    noun +
-    " on the shelf. Optional, up to two. pdf, epub, txt, or md.";
+  let text = state.books.length + " " + noun + " in the library. " + formats;
   if (state.booksTruncated) text += " Showing the first 2000.";
   return text;
 }
@@ -197,20 +205,111 @@ function onBookToggle(box) {
       setFieldError("source", "Pick at most two books.");
       return;
     }
-    state.selectedFiles.push(box.value);
+    state.selectedFiles.push({ rel: box.value, label: box.value, kind: "library" });
   } else {
-    state.selectedFiles = state.selectedFiles.filter((value) => value !== box.value);
+    state.selectedFiles = state.selectedFiles.filter((item) => item.rel !== box.value);
   }
   setFieldError("source", "");
-  updateBooksSummary();
+  renderPicked();
+  syncUpload();
 }
 
-function updateBooksSummary() {
-  const summary = document.getElementById("books-summary");
-  const count = state.selectedFiles.length;
-  if (count === 0) summary.textContent = "Optional: up to two books";
-  else if (count === 1) summary.textContent = state.selectedFiles[0];
-  else summary.textContent = state.selectedFiles[0] + " + " + (count - 1) + " more";
+function renderPicked() {
+  const list = document.getElementById("picked-books");
+  list.replaceChildren();
+  for (const item of state.selectedFiles) {
+    const row = document.createElement("li");
+    const name = document.createElement("span");
+    name.textContent = item.label;
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.textContent = "Remove";
+    remove.setAttribute("aria-label", "Remove " + item.label);
+    remove.addEventListener("click", () => removeSelected(item.rel));
+    row.append(name, remove);
+    list.appendChild(row);
+  }
+}
+
+function removeSelected(rel) {
+  state.selectedFiles = state.selectedFiles.filter((item) => item.rel !== rel);
+  const boxes = document.querySelectorAll("#books-panel input[type=checkbox]");
+  for (const box of boxes) {
+    if (box.value === rel) box.checked = false;
+  }
+  setFieldError("source", "");
+  renderPicked();
+  syncUpload();
+}
+
+function syncUpload() {
+  const input = document.getElementById("book-upload");
+  const label = document.getElementById("upload-label");
+  const blocked = state.uploading || state.selectedFiles.length >= 2;
+  input.disabled = blocked;
+  label.classList.toggle("is-disabled", state.selectedFiles.length >= 2);
+  label.classList.toggle("is-busy", state.uploading);
+  if (!state.uploading) label.textContent = "Upload";
+}
+
+function fileExtension(name) {
+  const dot = String(name).lastIndexOf(".");
+  return dot >= 0 ? name.slice(dot + 1).toLowerCase() : "";
+}
+
+async function onUploadChosen(event) {
+  const input = event.target;
+  const file = input.files && input.files[0];
+  input.value = "";
+  if (!file || state.uploading) return;
+  if (state.selectedFiles.length >= 2) {
+    setFieldError("source", "Pick at most two books.");
+    return;
+  }
+  const allowed = new Set(["pdf", "epub", "txt", "md"]);
+  if (!allowed.has(fileExtension(file.name))) {
+    setFieldError("source", "Upload a pdf, epub, txt, or md file.");
+    return;
+  }
+  if (file.size <= 0) {
+    setFieldError("source", "That file is empty.");
+    return;
+  }
+  if (file.size > state.maxUploadBytes) {
+    setFieldError("source", "That file is over 200 MB.");
+    return;
+  }
+  const body = new FormData();
+  body.append("file", file, file.name);
+  state.uploading = true;
+  const label = document.getElementById("upload-label");
+  label.textContent = "Uploading…";
+  syncUpload();
+  try {
+    const response = await fetch("/api/upload", { method: "POST", body: body, cache: "no-store" });
+    const data = await readJson(response);
+    if (!response.ok || !data.ok || typeof data.rel !== "string") {
+      setFieldError("source", data.error || "That file was not saved.");
+      return;
+    }
+    if (state.selectedFiles.length >= 2) {
+      setFieldError("source", "Pick at most two books.");
+      return;
+    }
+    if (state.selectedFiles.some((item) => item.rel === data.rel)) return;
+    state.selectedFiles.push({
+      rel: data.rel,
+      label: typeof data.name === "string" && data.name ? data.name : file.name,
+      kind: "upload",
+    });
+    setFieldError("source", "");
+  } catch (err) {
+    setFieldError("source", "Couldn't reach the desk.");
+  } finally {
+    state.uploading = false;
+    renderPicked();
+    syncUpload();
+  }
 }
 
 function voiceChoices(data) {
@@ -310,7 +409,7 @@ function collectPayload() {
   const topic = document.getElementById("topic").value.replace(/\s+/g, " ").trim();
   return {
     topic: topic,
-    files: state.selectedFiles.slice(),
+    files: state.selectedFiles.map((item) => item.rel),
     research: document.getElementById("research").checked,
     content_style: document.getElementById("content_style").value,
     length_minutes: selectedLength(),
@@ -326,7 +425,10 @@ function clientErrors(payload) {
   if (!payload.topic) errors.source = "Enter a topic.";
   else if (payload.topic.length > 600) errors.source = "Keep the topic under 600 characters.";
   else if (payload.files.length > 2) errors.source = "Pick at most two books.";
-  else if (state.booksError && payload.files.length > 0) {
+  else if (
+    state.booksError &&
+    state.selectedFiles.some((item) => item.kind === "library")
+  ) {
     errors.source = "The books folder is not available.";
   } else if (!payload.research && payload.files.length < 1) {
     errors.source = "Attach a book or PDF, or turn on web research.";

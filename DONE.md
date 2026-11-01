@@ -6,15 +6,29 @@ Episode desk is a local page for writing a podcast brief and handing it to a pip
 - [x] Listens on `127.0.0.1` only. `server.py` has no wildcard bind.
 - [x] Manual start: `start_ui.ps1` runs the server in that window and opens the browser. Close the window, or use **Stop server**. No service, startup item, or scheduled task.
 - [x] `config.example.json` is the committed sample, with dummy `C:\PodcastPipeline` paths. `config.json` is gitignored. No secrets in the repo.
-- [x] The episode starts with a required topic (a question, claim, or prompt, up to 600 characters). Books are optional, 0 to 2, and can be used with the topic. Web research is on by default. Turning it off requires a book or PDF. Script style is v2.5 by default, or v2.3.
+- [x] The episode starts with a required topic (a question, claim, or prompt, up to 600 characters). Books are optional, 0 to 2, from the library or from an upload, and can be used with the topic. Uploads are pdf, epub, txt, or md, up to 200 MB, saved under `uploads_dir`. `library_enabled` defaults to true and is the switch that turns the library folder off. Web research is on by default. Turning it off requires a book or PDF. Script style is v2.5 by default, or v2.3.
 - [x] Length is 20, 30, or 40 minutes, default 40.
-- [x] One or two guest voices. Carter is always the host and is not a guest. Hugh is never selectable. Elliot is never selectable (monotone Drama 3 voice) and is not in the sample roster. `banned_voices` defaults to Maya, Declan, Alice, Mary when the key is omitted. Clara and Lachlan are the ready guests. Isla, Marcus, Willa, Zara, Imogen, Frank, and Samuel are listed in `not_ready_voices` and shown disabled ("voice not ready for Drama 3 yet") until that config list drops them.
+- [x] One or two guest voices. Carter is always the host and is not a guest. Hugh is never selectable. Elliot is never selectable (monotone Drama 3 voice) and is not on the page. `banned_voices` defaults to Maya, Declan, Alice, Mary when the key is omitted. The page always lists Clara, Lachlan, Isla, Marcus, Willa, Zara, Imogen, Frank, and Samuel, even when a name is missing from `voices`. Clara and Lachlan are selectable when they are in `voices`. The other seven are shown disabled, struck through, and tagged "voice not ready", and cannot be submitted.
 - [x] Briefs are schema 2: `source.type` is `topic`, `source.research` is `web` or `none`, and `content_style` is `v2.5` or `v2.3`. The slug comes from the topic. Older briefs already on disk are left alone.
 - [x] Tone, depth, optional notes. Briefs always include `"quiz": false`. The page does not ask, and a client-supplied quiz value is ignored.
 - [x] Speech is fixed: Fish Audio Drama 3, fallback VibeVoice-7B. The page has no control for it, and a client-supplied engine is ignored.
 - [x] Submit validates, writes `brief_<slug>_<timestamp>.json`, and starts `launcher_cmd`. On Windows the flags are `CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP` (`0x08000200`). `DETACHED_PROCESS` is not used. Still running, or exit code 0 within about 2 seconds, counts as launched. A non-zero exit in that window is a failure and the message includes the code. The brief is kept. `--dry-run` / `-DryRun` writes the brief and does not launch.
 - [x] Status panel reads `status_file` on load and every 10 seconds.
-- [x] Unittest coverage for validation, brief writing, the launcher, and the loopback bind.
+- [x] Unittest coverage for validation, brief writing, uploads, the guest roster, the launcher, and the loopback bind.
+
+## Uploads and the guest roster
+
+Books can come from the library or from an upload. An upload is stored under `uploads_dir` (default `uploads/books` next to `config.json`) with a sanitized unique name, and the brief stores that absolute path the same way it stores a library path. `library_enabled` defaults to true. Setting it to false hides the library and rejects library paths. Uploads still work.
+
+The guest list is the roster in code, not whoever happens to be in `voices`. A config whose `voices` are only Carter, Clara, Lachlan, and Elliot still shows Isla, Marcus, Willa, Zara, Imogen, Frank, and Samuel, greyed out and struck through, with the tag "voice not ready". The guest section is the name plus that tag. The old Hugh/Elliot/config paragraph is gone.
+
+```text
+python3 -m unittest discover -s tests -v
+```
+
+Result: **73 tests, OK**.
+
+Live server, dry run, port 47221, with `voices` set to Carter, Clara, Lachlan, and Elliot, and `not_ready_voices` set to the other seven. Elliot was not on the page. Clara and Lachlan could be selected. Clicking Isla did not select her. Uploading `harbor.md` added it beside the library picker, inside the same two-book limit. Submitting the topic "How the lamp changed the coast", that upload, Clara, calm, and deep wrote a schema 2 brief whose file path is inside the uploads folder. The page said the pipeline was not started. At about 390px wide the book row stacks and the form sits above the status panel.
 
 ## Quiz removed
 

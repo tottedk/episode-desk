@@ -44,6 +44,8 @@ class ConstraintTests(unittest.TestCase):
             set(data),
             {
                 "books_dir",
+                "uploads_dir",
+                "library_enabled",
                 "briefs_dir",
                 "launcher_cmd",
                 "voices",
@@ -52,6 +54,8 @@ class ConstraintTests(unittest.TestCase):
                 "status_file",
             },
         )
+        self.assertEqual(data["uploads_dir"], "uploads/books")
+        self.assertIs(data["library_enabled"], True)
         self.assertEqual(data["banned_voices"], ["Maya", "Declan", "Alice", "Mary"])
         self.assertEqual(
             data["not_ready_voices"],
@@ -85,6 +89,7 @@ class ConstraintTests(unittest.TestCase):
     def test_config_json_is_gitignored(self) -> None:
         ignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
         self.assertIn("config.json", ignore)
+        self.assertIn("uploads/", ignore)
 
 
 if __name__ == "__main__":

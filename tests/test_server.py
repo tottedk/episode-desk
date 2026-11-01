@@ -23,8 +23,11 @@ import support  # noqa: E402
 
 import server  # noqa: E402
 from podcast_brief import (  # noqa: E402
+    GUEST_ROSTER,
     LAUNCH_SETTLE_SECONDS,
     MAX_STATUS_BYTES,
+    MAX_UPLOAD_BYTES,
+    NOT_READY_NOTE,
     WINDOWS_DETACHED_FLAGS,
 )
 from server import App, create_server  # noqa: E402
@@ -65,6 +68,27 @@ class ServerTest(unittest.TestCase):
             payload = json.loads(raw.decode("utf-8")) if raw else None
             return exc.code, payload, exc.headers
 
+    def upload(self, filename: str, content: bytes):
+        boundary = "----DeskBoundary7"
+        body = (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+            f"Content-Type: application/octet-stream\r\n\r\n"
+        ).encode("utf-8") + content + f"\r\n--{boundary}--\r\n".encode("utf-8")
+        req = urllib.request.Request(
+            self.base + "/api/upload",
+            data=body,
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=5) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+                return response.status, payload
+        except urllib.error.HTTPError as exc:
+            payload = json.loads(exc.read().decode("utf-8"))
+            return exc.code, payload
+
     def test_binds_loopback_only(self) -> None:
         self.assertEqual(server.BIND_HOST, "127.0.0.1")
         self.assertEqual(self.httpd.server_address[0], "127.0.0.1")
@@ -82,13 +106,20 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(payload["voices"], ["Elena", "Jonah", "Priya"])
         self.assertEqual(
             payload["voice_choices"],
-            [
+            [_guest_choice(name, False) for name in GUEST_ROSTER]
+            + [
                 {"name": "Elena", "ready": True},
                 {"name": "Jonah", "ready": True},
                 {"name": "Priya", "ready": True},
             ],
         )
-        self.assertEqual(payload["not_ready_note"], "voice not ready for Drama 3 yet")
+        self.assertEqual(payload["not_ready_note"], NOT_READY_NOTE)
+        self.assertEqual(NOT_READY_NOTE, "voice not ready")
+        self.assertTrue(payload["library_enabled"])
+        self.assertEqual(payload["max_upload_bytes"], MAX_UPLOAD_BYTES)
+        shown = [choice["name"] for choice in payload["voice_choices"]]
+        for hidden in ("Carter", "Hugh", "Elliot", "Maya"):
+            self.assertNotIn(hidden, shown)
         self.assertNotIn("Carter", payload["voices"])
         self.assertNotIn("Hugh", payload["voices"])
         self.assertNotIn("Maya", payload["voices"])
@@ -184,16 +215,9 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(payload["voices"], ["Clara", "Lachlan"])
         self.assertEqual(
             payload["voice_choices"],
-            [
-                {"name": "Clara", "ready": True},
-                {"name": "Lachlan", "ready": True},
-                {
-                    "name": "Isla",
-                    "ready": False,
-                    "note": "voice not ready for Drama 3 yet",
-                },
-            ],
+            [_guest_choice(name, name in {"Clara", "Lachlan"}) for name in GUEST_ROSTER],
         )
+        self.assertIn("Marcus", [choice["name"] for choice in payload["voice_choices"]])
         status, payload, _headers = self.request(
             "POST", "/api/brief", support.valid_payload(guest_voices=["Isla"])
         )
@@ -257,11 +281,18 @@ class ServerTest(unittest.TestCase):
         self.assertIn("What's the episode about?", html)
         self.assertIn('id="topic"', html)
         self.assertIn('maxlength="600"', html)
-        self.assertIn("Optional books / PDFs (0-2)", html)
+        self.assertIn("Books (0-2)", html)
+        self.assertIn('id="book-upload"', html)
+        self.assertIn(">Upload<", html)
+        self.assertNotIn("Optional books / PDFs", html)
         self.assertIn('id="research" name="research" checked', html)
         self.assertIn("Research the web", html)
-        self.assertIn("his Drama 3 voice is monotone", html)
-        self.assertIn("not_ready_voices", html)
+        self.assertNotIn("his Drama 3 voice is monotone", html)
+        self.assertNotIn("not_ready_voices", html)
+        self.assertNotIn("he is not paired with Carter", html)
+        self.assertNotIn("Pick one or two ready voices", html)
+        css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
+        self.assertIn("line-through", css)
         self.assertIn('id="content_style"', html)
         self.assertIn('value="v2.5" selected', html)
         self.assertIn('value="v2.3"', html)
@@ -315,6 +346,78 @@ class ServerTest(unittest.TestCase):
         with urllib.request.urlopen(self.base + "/favicon.ico", timeout=5) as response:
             self.assertEqual(response.status, 204)
             self.assertEqual(response.read(), b"")
+
+    def test_upload_is_referenced_like_a_library_book(self) -> None:
+        status, uploaded = self.upload("../../secret.txt", b"from the desk\n")
+        self.assertEqual(status, 201, uploaded)
+        self.assertTrue(uploaded["rel"].startswith("upload:"))
+        self.assertNotIn("..", uploaded["rel"])
+        self.assertNotIn("/", uploaded["rel"].split(":", 1)[1])
+        self.assertEqual(uploaded["name"], "secret.txt")
+        outside = self.config.uploads_dir.parent / "secret.txt"
+        self.assertFalse(outside.exists())
+        status, payload, _headers = self.request(
+            "POST",
+            "/api/brief",
+            support.valid_payload(files=["On Lighthouses.pdf", uploaded["rel"]]),
+        )
+        self.assertEqual(status, 201, payload)
+        brief = json.loads(Path(payload["brief_path"]).read_text(encoding="utf-8"))
+        library_path, upload_path = (Path(item) for item in brief["source"]["files"])
+        self.assertEqual(
+            library_path,
+            (self.config.books_dir / "On Lighthouses.pdf").resolve(),
+        )
+        self.assertEqual(upload_path.parent, self.config.uploads_dir.resolve())
+        self.assertEqual(upload_path.read_bytes(), b"from the desk\n")
+        self.assertTrue(upload_path.is_file())
+
+    def test_upload_rejects_bad_type_and_oversize(self) -> None:
+        status, payload = self.upload("skip.exe", b"MZ")
+        self.assertEqual(status, 400)
+        self.assertIn("pdf", payload["error"])
+        with mock.patch("podcast_brief.MAX_UPLOAD_BYTES", 8):
+            status, payload = self.upload("note.txt", b"x" * 30)
+        self.assertEqual(status, 400)
+        self.assertIn("200 MB", payload["error"])
+        with mock.patch("server.MAX_UPLOAD_BYTES", 1), mock.patch("server.UPLOAD_BODY_OVERHEAD", 0):
+            status, payload = self.upload("note.txt", b"hello")
+        self.assertEqual(status, 400)
+        self.assertIn("200 MB", payload["error"])
+        status, payload, _headers = self.request(
+            "POST",
+            "/api/upload",
+            {"file": "x"},
+            content_type="application/json",
+        )
+        self.assertEqual(status, 415)
+        status, _payload, headers = self.request("GET", "/api/upload")
+        self.assertEqual(status, 405)
+        self.assertEqual(headers["Allow"], "POST")
+
+    def test_library_off_hides_the_shelf(self) -> None:
+        self.app.config = replace(self.app.config, library_enabled=False)
+        status, payload, _headers = self.request("GET", "/api/options")
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["books"], [])
+        self.assertIsNone(payload["books_error"])
+        self.assertFalse(payload["library_enabled"])
+        self.assertTrue((self.config.books_dir / "On Lighthouses.pdf").is_file())
+        status, payload, _headers = self.request("POST", "/api/brief", support.valid_payload())
+        self.assertEqual(status, 400)
+        self.assertIn("library", payload["errors"]["source"].casefold())
+        status, uploaded = self.upload("Notes.txt", b"only an upload\n")
+        self.assertEqual(status, 201, uploaded)
+        status, payload, _headers = self.request(
+            "POST",
+            "/api/brief",
+            support.valid_payload(files=[uploaded["rel"]], research=False),
+        )
+        self.assertEqual(status, 201, payload)
+        brief = json.loads(Path(payload["brief_path"]).read_text(encoding="utf-8"))
+        stored = Path(brief["source"]["files"][0])
+        self.assertEqual(stored.parent, self.config.uploads_dir.resolve())
+        self.assertEqual(stored.read_bytes(), b"only an upload\n")
 
     def test_books_dir_missing_is_reported(self) -> None:
         paths = list(self.config.books_dir.rglob("*"))
@@ -375,6 +478,13 @@ class StopTest(unittest.TestCase):
         httpd.server_close()
         with self.assertRaises(OSError):
             urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=2)
+
+
+def _guest_choice(name: str, ready: bool) -> dict:
+    choice: dict = {"name": name, "ready": ready}
+    if not ready:
+        choice["note"] = NOT_READY_NOTE
+    return choice
 
 
 if __name__ == "__main__":

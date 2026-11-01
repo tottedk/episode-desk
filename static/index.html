@@ -33,16 +33,21 @@
           <p class="hint" id="topic-hint">A question or claim works best: 'AI is built on all of human knowledge: will it inherit our capacity for evil?'</p>
           <p class="counter" id="topic-count">0/600</p>
         </div>
-        <h3 class="subhead">Optional books / PDFs (0-2)</h3>
+        <h3 class="subhead" id="books-label">Books (0-2)</h3>
         <div id="files-panel">
-          <p class="hint" id="books-hint">Optional. Up to two files. pdf, epub, txt, or md.</p>
-          <div class="dropdown" id="books-dropdown">
-            <button type="button" class="dropdown-btn" id="books-toggle" aria-expanded="false" aria-controls="books-panel">
-              <span id="books-summary">Optional: up to two books</span>
-              <span class="caret" aria-hidden="true"></span>
-            </button>
-            <div class="dropdown-panel" id="books-panel" hidden></div>
+          <div class="book-row">
+            <div class="dropdown" id="books-dropdown">
+              <button type="button" class="dropdown-btn" id="books-toggle" aria-expanded="false" aria-controls="books-panel">
+                <span id="books-summary">Library</span>
+                <span class="caret" aria-hidden="true"></span>
+              </button>
+              <div class="dropdown-panel" id="books-panel" hidden></div>
+            </div>
+            <label class="upload-label" id="upload-label" for="book-upload">Upload</label>
+            <input class="file-input" type="file" id="book-upload" accept=".pdf,.epub,.txt,.md,application/pdf,text/plain,text/markdown">
           </div>
+          <ul class="picked" id="picked-books"></ul>
+          <p class="hint" id="books-hint">PDF, EPUB, TXT, or MD. Up to 200 MB.</p>
         </div>
         <label class="check">
           <input type="checkbox" id="research" name="research" checked>
@@ -74,7 +79,6 @@
       <section class="field" id="field-guest_voices">
         <h2>Guest voices</h2>
         <p class="host-lock">Host <strong id="host-name">Carter</strong> <span>Always. Not a guest.</span></p>
-        <p class="hint">Pick one or two ready voices. Hugh is not listed: he is not paired with Carter. Elliot is not listed: his Drama 3 voice is monotone. A dimmed name has no Drama 3 clip yet. Remove that name from <code>not_ready_voices</code> in config.json when the clip is added.</p>
         <div class="voices" id="voices" role="group" aria-label="Guest voices"></div>
         <p class="field-error" id="error-guest_voices" role="alert"></p>
       </section>

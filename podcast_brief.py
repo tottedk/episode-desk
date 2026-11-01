@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
 import subprocess
 import tempfile
 import threading
@@ -25,8 +26,22 @@ HOST_VOICE = "Carter"
 EXCLUDED_WITH_HOST = "Hugh"
 OUT_VOICES = ("Elliot",)
 DEFAULT_BANNED_VOICES = ("Maya", "Declan", "Alice", "Mary")
-# These names are in the roster but have no Drama 3 reference clip yet.
-# config.json can replace this list. An empty list makes them selectable.
+# Shown on the page even when a name is missing from config voices.
+# Clara and Lachlan ship with Drama 3 clips. The other seven do not.
+GUEST_ROSTER = (
+    "Clara",
+    "Lachlan",
+    "Isla",
+    "Marcus",
+    "Willa",
+    "Zara",
+    "Imogen",
+    "Frank",
+    "Samuel",
+)
+# These roster names have no Drama 3 reference clip yet.
+# config.json can replace this list. An empty list makes a name selectable
+# only when that name is also listed in voices.
 DEFAULT_NOT_READY_VOICES = (
     "Isla",
     "Marcus",
@@ -36,9 +51,16 @@ DEFAULT_NOT_READY_VOICES = (
     "Frank",
     "Samuel",
 )
-NOT_READY_NOTE = "voice not ready for Drama 3 yet"
+NOT_READY_NOTE = "voice not ready"
 
 BOOK_EXTENSIONS = frozenset({".pdf", ".epub", ".txt", ".md"})
+MAX_UPLOAD_BYTES = 200 * 1024 * 1024
+UPLOAD_BODY_OVERHEAD = 65_536
+UPLOAD_PREFIX = "upload:"
+_STORED_UPLOAD_RE = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9._-]{0,120}\.(pdf|epub|txt|md)$",
+    re.IGNORECASE,
+)
 LENGTH_MINUTES = (20, 30, 40)
 DEFAULT_LENGTH_MINUTES = 40
 TONES = ("calm", "playful", "debate", "serious")
@@ -95,6 +117,8 @@ class AppConfig:
     banned_voices: tuple[str, ...]
     not_ready_voices: tuple[str, ...]
     status_file: Path
+    uploads_dir: Path
+    library_enabled: bool
 
 
 @dataclass(frozen=True)
@@ -141,6 +165,11 @@ def load_config(path: Path) -> AppConfig:
         not_ready = DEFAULT_NOT_READY_VOICES
     else:
         not_ready = _require_name_list(data, "not_ready_voices", allow_empty=True)
+    if "uploads_dir" not in data:
+        uploads_dir = (base / "uploads" / "books").resolve()
+    else:
+        uploads_dir = _require_path(data, "uploads_dir", base)
+    library_enabled = _require_bool(data, "library_enabled", default=True)
     return AppConfig(
         books_dir=books_dir,
         briefs_dir=briefs_dir,
@@ -149,7 +178,17 @@ def load_config(path: Path) -> AppConfig:
         banned_voices=banned,
         not_ready_voices=not_ready,
         status_file=status_file,
+        uploads_dir=uploads_dir,
+        library_enabled=library_enabled,
     )
+
+
+def _blocked_voice_keys(banned_voices: Sequence[str]) -> set[str]:
+    blocked = {name.casefold() for name in banned_voices}
+    blocked.add(HOST_VOICE.casefold())
+    blocked.add(EXCLUDED_WITH_HOST.casefold())
+    blocked.update(name.casefold() for name in OUT_VOICES)
+    return blocked
 
 
 def voice_choices(
@@ -157,25 +196,51 @@ def voice_choices(
     banned_voices: Sequence[str],
     not_ready_voices: Sequence[str] = (),
 ) -> list[dict[str, object]]:
-    """Guests to show, in roster order.
+    """Guests to show.
 
-    A ready guest can be picked. A not-ready guest is shown and cannot be
-    picked. Carter, Hugh, Elliot, and ``banned_voices`` are left off the page.
+    The guest roster is always listed, even when a name is missing from
+    ``voices``. A guest can be picked only when that name is in ``voices``
+    and not in ``not_ready_voices``. Anyone else on the roster is shown and
+    cannot be picked. Extra names from ``voices`` or ``not_ready_voices``
+    follow the roster. Carter, Hugh, Elliot, and ``banned_voices`` are left
+    off the page.
     """
-    blocked = {name.casefold() for name in banned_voices}
-    blocked.add(HOST_VOICE.casefold())
-    blocked.add(EXCLUDED_WITH_HOST.casefold())
-    blocked.update(name.casefold() for name in OUT_VOICES)
+    blocked = _blocked_voice_keys(banned_voices)
     waiting = {name.casefold() for name in not_ready_voices}
-    result: list[dict[str, object]] = []
-    seen: set[str] = set()
+    configured: dict[str, str] = {}
     for voice in voices:
         key = voice.casefold()
-        if key in blocked or key in seen:
+        if key in blocked or key in configured:
             continue
+        configured[key] = voice
+
+    roster_by_key = {name.casefold(): name for name in GUEST_ROSTER}
+    ordered: list[str] = []
+    seen: set[str] = set()
+
+    def add(display: str) -> None:
+        key = display.casefold()
+        if key in blocked or key in seen:
+            return
         seen.add(key)
-        ready = key not in waiting
-        entry: dict[str, object] = {"name": voice, "ready": ready}
+        if key in roster_by_key:
+            display = roster_by_key[key]
+        elif key in configured:
+            display = configured[key]
+        ordered.append(display)
+
+    for name in GUEST_ROSTER:
+        add(name)
+    for voice in voices:
+        add(voice)
+    for name in not_ready_voices:
+        add(name)
+
+    result: list[dict[str, object]] = []
+    for display in ordered:
+        key = display.casefold()
+        ready = key in configured and key not in waiting
+        entry: dict[str, object] = {"name": display, "ready": ready}
         if not ready:
             entry["note"] = NOT_READY_NOTE
         result.append(entry)
@@ -190,9 +255,11 @@ def selectable_voices(
     """Voices the desk may accept as guests.
 
     Carter is the host. Hugh is never offered. Elliot is never offered.
-    Names in ``banned_voices`` are never offered. Names in
-    ``not_ready_voices`` are shown but cannot be picked. Order follows
-    ``voices``.
+    Names in ``banned_voices`` are never offered. Names on the guest roster
+    are shown even when they are missing from ``voices``, and they cannot
+    be picked until they are listed there. Names in ``not_ready_voices`` are
+    shown but cannot be picked. Ready names follow the roster, then any
+    other ready name in ``voices`` order.
     """
     names: list[str] = []
     for choice in voice_choices(voices, banned_voices, not_ready_voices):
@@ -257,6 +324,136 @@ def resolve_book(books_dir: Path, rel: str) -> Path:
     if resolved.suffix.lower() not in BOOK_EXTENSIONS:
         raise BookError("That file isn't on the shelf.")
     return resolved
+
+
+def resolve_brief_file(config: AppConfig, rel: str) -> Path:
+    """Resolve a library path or an ``upload:`` id to a file on disk.
+
+    The brief stores the absolute path either way, so the pipeline does not
+    care which folder the file came from.
+    """
+    if isinstance(rel, str) and rel.startswith(UPLOAD_PREFIX):
+        return resolve_upload(config.uploads_dir, rel)
+    if not config.library_enabled:
+        raise BookError("The library is turned off. Upload a book instead.")
+    return resolve_book(config.books_dir, rel)
+
+
+def resolve_upload(uploads_dir: Path, rel: str) -> Path:
+    """Resolve an upload id and reject anything outside the uploads folder."""
+    if not isinstance(rel, str) or not rel.startswith(UPLOAD_PREFIX):
+        raise BookError("That file isn't an upload.")
+    name = rel[len(UPLOAD_PREFIX) :]
+    if not _STORED_UPLOAD_RE.fullmatch(name):
+        raise BookError("That file isn't an upload.")
+    if uploads_dir.is_symlink():
+        raise BookError("That file isn't an upload.")
+    root = uploads_dir.resolve()
+    if not root.is_dir():
+        raise BookError("That file isn't an upload.")
+    candidate = root / name
+    if candidate.is_symlink() or Path(name).name != name:
+        raise BookError("That file isn't an upload.")
+    try:
+        resolved = candidate.resolve()
+    except OSError as exc:
+        raise BookError("That file isn't an upload.") from exc
+    if not is_within(resolved, root) or not resolved.is_file():
+        raise BookError("That file isn't an upload.")
+    if resolved.suffix.lower() not in BOOK_EXTENSIONS:
+        raise BookError("That file isn't an upload.")
+    return resolved
+
+
+def safe_upload_filename(original: str) -> str:
+    """Basename only, with a unique suffix, so the stored name cannot traverse."""
+    if not isinstance(original, str) or "\x00" in original:
+        raise BookError("That file needs a name.")
+    base = Path(original.replace("\\", "/")).name.strip()
+    if base in {"", ".", ".."}:
+        raise BookError("That file needs a name.")
+    suffix = Path(base).suffix.lower()
+    if suffix not in BOOK_EXTENSIONS:
+        raise BookError("Upload a pdf, epub, txt, or md file.")
+    stem = base[: -len(suffix)]
+    stem = re.sub(r"[^A-Za-z0-9._ -]+", "", stem)
+    stem = re.sub(r"\s+", "-", stem).strip("._-")
+    if not stem:
+        stem = "book"
+    stem = stem[:60].strip("._-") or "book"
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    token = secrets.token_hex(4)
+    stored = f"{stem}_{stamp}_{token}{suffix}"
+    if not _STORED_UPLOAD_RE.fullmatch(stored) or Path(stored).name != stored:
+        raise BookError("That file needs a name.")
+    return stored
+
+
+def upload_display_name(original: str) -> str:
+    """The name shown on the page. It is never used as a path."""
+    if not isinstance(original, str):
+        return "book"
+    base = Path(original.replace("\\", "/")).name
+    base = re.sub(r"[\x00-\x1f]", "", base).strip()
+    if base in {"", ".", ".."}:
+        return "book"
+    return base[:120]
+
+
+def save_upload(config: AppConfig, filename: str, data: bytes) -> dict[str, str]:
+    """Write one upload under ``uploads_dir`` and return its brief reference."""
+    if not isinstance(data, (bytes, bytearray)):
+        raise BookError("That file could not be read.")
+    blob = bytes(data)
+    if len(blob) > MAX_UPLOAD_BYTES:
+        raise BookError("That file is over 200 MB.")
+    if not blob:
+        raise BookError("That file is empty.")
+    stored = safe_upload_filename(filename)
+    root = _uploads_root(config.uploads_dir)
+    dest = root / stored
+    if dest.name != stored or not is_within(dest, root):
+        raise BookError("Couldn't save that file.")
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        fd = os.open(dest, flags, 0o644)
+    except OSError as exc:
+        raise BookError("Couldn't save that file.") from exc
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(blob)
+            handle.flush()
+            os.fsync(handle.fileno())
+    except Exception:
+        if dest.exists() and not dest.is_symlink():
+            dest.unlink()
+        raise
+    if dest.is_symlink():
+        raise BookError("Couldn't save that file.")
+    resolved = dest.resolve()
+    if not is_within(resolved, root) or not resolved.is_file():
+        if dest.exists() and not dest.is_symlink():
+            dest.unlink()
+        raise BookError("Couldn't save that file.")
+    return {
+        "rel": UPLOAD_PREFIX + stored,
+        "name": upload_display_name(filename),
+        "path": str(resolved),
+    }
+
+
+def _uploads_root(path: Path) -> Path:
+    if path.is_symlink():
+        raise BookError("Uploads folder is not available.")
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise BookError("Uploads folder is not available.") from exc
+    if path.is_symlink() or not path.is_dir():
+        raise BookError("Uploads folder is not available.")
+    return path.resolve()
 
 
 def is_within(child: Path, parent: Path) -> bool:
@@ -484,6 +681,15 @@ def read_status(path: Path) -> dict:
     return {"ok": True, "exists": True, "text": text, "truncated": truncated}
 
 
+def _require_bool(data: dict, key: str, *, default: bool) -> bool:
+    if key not in data:
+        return default
+    value = data[key]
+    if not isinstance(value, bool):
+        raise ConfigError(f"{key} must be true or false.")
+    return value
+
+
 def _require_path(data: dict, key: str, base: Path) -> Path:
     raw = data.get(key)
     if not isinstance(raw, str) or not raw.strip() or "\x00" in raw:
@@ -543,7 +749,7 @@ def _validate_source(
     seen: set[str] = set()
     for rel in files_raw:
         try:
-            path = resolve_book(config.books_dir, rel)
+            path = resolve_brief_file(config, rel)
         except BookError as exc:
             return None, (), None, str(exc)
         key = str(path).casefold()

@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import threading
 import time
 import traceback
+from urllib.parse import unquote
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
@@ -28,12 +30,15 @@ from podcast_brief import (
     LaunchError,
     LENGTH_MINUTES,
     TONES,
+    MAX_UPLOAD_BYTES,
+    UPLOAD_BODY_OVERHEAD,
     BookError,
     launch_detached,
     list_books,
     load_config,
     read_status,
     NOT_READY_NOTE,
+    save_upload,
     selectable_voices,
     validate_payload,
     voice_choices,
@@ -134,7 +139,7 @@ def make_handler(app: App):
                     {"ok": True, "bind": host, "port": port, "dry_run": app.dry_run},
                 )
                 return
-            if path in {"/api/brief", "/api/stop"}:
+            if path in {"/api/brief", "/api/stop", "/api/upload"}:
                 self._send_json(405, {"ok": False, "error": "Method not allowed."}, allow="POST")
                 return
             self._send_json(404, {"ok": False, "error": "Not found."})
@@ -143,6 +148,9 @@ def make_handler(app: App):
             path = urlparse(self.path).path
             if path == "/api/brief":
                 self._handle_brief()
+                return
+            if path == "/api/upload":
+                self._handle_upload()
                 return
             if path == "/api/stop":
                 self._handle_stop()
@@ -211,6 +219,38 @@ def make_handler(app: App):
                 },
             )
 
+        def _handle_upload(self) -> None:
+            content_type = self.headers.get("Content-Type", "")
+            if "multipart/form-data" not in content_type.lower():
+                self._send_json(
+                    415,
+                    {"ok": False, "error": "Upload the file as multipart form data."},
+                )
+                return
+            try:
+                length = _content_length(self)
+            except ValueError as exc:
+                self._send_json(400, {"ok": False, "error": str(exc)})
+                return
+            if length > MAX_UPLOAD_BYTES + UPLOAD_BODY_OVERHEAD:
+                self.close_connection = True
+                self._send_json(400, {"ok": False, "error": "That file is over 200 MB."})
+                return
+            if length <= 0:
+                self._send_json(400, {"ok": False, "error": "Expected a file."})
+                return
+            raw = self.rfile.read(length)
+            try:
+                filename, data = extract_upload(content_type, raw)
+                saved = save_upload(app.config, filename, data)
+            except (ValueError, BookError) as exc:
+                self._send_json(400, {"ok": False, "error": str(exc)})
+                return
+            except OSError:
+                self._send_json(500, {"ok": False, "error": "Couldn't save that file."})
+                return
+            self._send_json(201, {"ok": True, "rel": saved["rel"], "name": saved["name"]})
+
         def _handle_stop(self) -> None:
             self._send_json(200, {"ok": True, "stopping": True})
             print("Stop requested.", flush=True)
@@ -275,6 +315,67 @@ def make_handler(app: App):
     return Handler
 
 
+def extract_upload(content_type: str, body: bytes) -> tuple[str, bytes]:
+    """Return the filename and bytes of the first file part."""
+    match = re.search(
+        r'boundary\s*=\s*(?:"([^"]+)"|([^;]+))',
+        content_type,
+        re.IGNORECASE,
+    )
+    if not match:
+        raise ValueError("Upload must be multipart form data.")
+    boundary = (match.group(1) or match.group(2) or "").strip()
+    if not boundary:
+        raise ValueError("Upload must be multipart form data.")
+    try:
+        marker = b"--" + boundary.encode("ascii")
+    except UnicodeEncodeError as exc:
+        raise ValueError("Upload must be multipart form data.") from exc
+    for chunk in body.split(marker)[1:]:
+        if chunk.startswith(b"--"):
+            break
+        if chunk.startswith(b"\r\n"):
+            chunk = chunk[2:]
+        elif chunk.startswith(b"\n"):
+            chunk = chunk[1:]
+        separator = b"\r\n\r\n" if b"\r\n\r\n" in chunk else b"\n\n"
+        head, found, data = chunk.partition(separator)
+        if not found:
+            continue
+        if data.endswith(b"\r\n"):
+            data = data[:-2]
+        elif data.endswith(b"\n"):
+            data = data[:-1]
+        disposition = ""
+        for line in head.decode("utf-8", "replace").splitlines():
+            if line.lower().startswith("content-disposition:"):
+                disposition = line.split(":", 1)[1].strip()
+                break
+        filename = _filename_from_disposition(disposition)
+        if filename:
+            return filename, data
+    raise ValueError("Choose a file to upload.")
+
+
+def _filename_from_disposition(disposition: str) -> str | None:
+    if not disposition:
+        return None
+    star = re.search(r"filename\*\s*=\s*(?:UTF-8|utf-8)''([^;]+)", disposition)
+    if star:
+        name = unquote(star.group(1).strip().strip('"'))
+        if name:
+            return name
+    quoted = re.search(r'filename\s*=\s*"((?:\\.|[^"\\])*)"', disposition)
+    if quoted:
+        return quoted.group(1).replace('\\"', '"').replace("\\\\", "\\")
+    plain = re.search(r"filename\s*=\s*([^;]+)", disposition)
+    if plain:
+        name = plain.group(1).strip().strip('"')
+        if name:
+            return name
+    return None
+
+
 def _content_length(handler: BaseHTTPRequestHandler) -> int:
     raw = handler.headers.get("Content-Length", "0")
     try:
@@ -296,18 +397,22 @@ def _defer_shutdown(server: ThreadingHTTPServer) -> None:
 
 def _options_payload(app: App) -> dict:
     config = app.config
+    books: list[dict[str, str]] = []
     books_error = None
     truncated = False
-    try:
-        books, truncated = list_books(config.books_dir)
-    except BookError as exc:
-        books = []
-        books_error = str(exc)
+    if config.library_enabled:
+        try:
+            books, truncated = list_books(config.books_dir)
+        except BookError as exc:
+            books = []
+            books_error = str(exc)
     return {
         "ok": True,
         "books": books,
         "books_error": books_error,
         "books_truncated": truncated,
+        "library_enabled": config.library_enabled,
+        "max_upload_bytes": MAX_UPLOAD_BYTES,
         "voices": selectable_voices(
             config.voices, config.banned_voices, config.not_ready_voices
         ),

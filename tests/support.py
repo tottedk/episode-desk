@@ -24,8 +24,10 @@ def write_shelf(books: Path) -> None:
 def make_config(root: Path, **overrides) -> AppConfig:
     books = root / "books"
     briefs = root / "briefs"
+    uploads = root / "uploads" / "books"
     write_shelf(books)
     briefs.mkdir()
+    uploads.mkdir(parents=True)
     status = root / "status.txt"
     status.write_text("rendering chapter 2\n", encoding="utf-8")
     values = {
@@ -36,6 +38,8 @@ def make_config(root: Path, **overrides) -> AppConfig:
         "banned_voices": DEFAULT_BANNED_VOICES,
         "not_ready_voices": (),
         "status_file": status,
+        "uploads_dir": uploads,
+        "library_enabled": True,
     }
     values.update(overrides)
     return AppConfig(**values)

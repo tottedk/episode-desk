@@ -18,11 +18,13 @@ import support  # noqa: E402
 
 from podcast_brief import (  # noqa: E402
     DEFAULT_BANNED_VOICES,
+    GUEST_ROSTER,
     HOST_VOICE,
     LAUNCH_SETTLE_SECONDS,
     TTS_ENGINE,
     TTS_FALLBACK,
     WINDOWS_DETACHED_FLAGS,
+    BookError,
     BriefIOError,
     ConfigError,
     LaunchError,
@@ -32,6 +34,8 @@ from podcast_brief import (  # noqa: E402
     powershell_single_quote,
     read_status,
     render_launcher_command,
+    resolve_upload,
+    save_upload,
     DEFAULT_NOT_READY_VOICES,
     NOT_READY_NOTE,
     selectable_voices,
@@ -115,6 +119,24 @@ class VoiceTests(unittest.TestCase):
             ["Clara", "Lachlan"],
         )
 
+    def test_roster_is_shown_when_missing_from_voices(self) -> None:
+        voices = ["Carter", "Clara", "Lachlan", "Elliot"]
+        waiting = list(DEFAULT_NOT_READY_VOICES)
+        choices = voice_choices(voices, list(DEFAULT_BANNED_VOICES), waiting)
+        self.assertEqual([choice["name"] for choice in choices], list(GUEST_ROSTER))
+        self.assertEqual(
+            [(choice["name"], choice["ready"]) for choice in choices],
+            [(name, name in {"Clara", "Lachlan"}) for name in GUEST_ROSTER],
+        )
+        self.assertEqual(choices[2]["note"], "voice not ready")
+        self.assertNotIn("note", choices[0])
+        self.assertNotIn("Elliot", [choice["name"] for choice in choices])
+        self.assertNotIn("Carter", [choice["name"] for choice in choices])
+        self.assertEqual(
+            selectable_voices(voices, list(DEFAULT_BANNED_VOICES), waiting),
+            ["Clara", "Lachlan"],
+        )
+
     def test_empty_not_ready_list_enables_the_roster(self) -> None:
         voices = selectable_voices(
             ["Clara", "Isla", "Frank"],
@@ -144,6 +166,11 @@ class VoiceTests(unittest.TestCase):
             self.assertNotIn(banned, folds)
         self.assertNotIn("Elliot", config.voices)
         self.assertEqual(config.not_ready_voices, DEFAULT_NOT_READY_VOICES)
+        self.assertTrue(config.library_enabled)
+        self.assertEqual(
+            config.uploads_dir,
+            (ROOT / "uploads" / "books").resolve(),
+        )
         self.assertGreaterEqual(len(voices), 2)
         self.assertIn("{brief_path}", config.launcher_cmd)
         rendered = render_launcher_command(
@@ -181,6 +208,8 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(config.status_file, (root / "status.txt").resolve())
             self.assertEqual(config.banned_voices, DEFAULT_BANNED_VOICES)
             self.assertEqual(config.not_ready_voices, DEFAULT_NOT_READY_VOICES)
+            self.assertTrue(config.library_enabled)
+            self.assertEqual(config.uploads_dir, (root / "uploads" / "books").resolve())
 
     def test_explicit_empty_ban_list(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -239,6 +268,39 @@ class ConfigTests(unittest.TestCase):
             with self.assertRaises(ConfigError):
                 load_config(path)
             path.write_text("{", encoding="utf-8")
+            with self.assertRaises(ConfigError):
+                load_config(path)
+
+    def test_library_flag_and_uploads_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "config.json"
+            support.write_config(
+                path,
+                {
+                    "books_dir": "books",
+                    "briefs_dir": "briefs",
+                    "launcher_cmd": "echo {brief_path}",
+                    "voices": ["Clara"],
+                    "uploads_dir": "incoming",
+                    "library_enabled": False,
+                    "status_file": "status.txt",
+                },
+            )
+            config = load_config(path)
+            self.assertFalse(config.library_enabled)
+            self.assertEqual(config.uploads_dir, (root / "incoming").resolve())
+            support.write_config(
+                path,
+                {
+                    "books_dir": "books",
+                    "briefs_dir": "briefs",
+                    "launcher_cmd": "echo {brief_path}",
+                    "voices": ["Clara"],
+                    "library_enabled": "yes",
+                    "status_file": "status.txt",
+                },
+            )
             with self.assertRaises(ConfigError):
                 load_config(path)
 
@@ -479,6 +541,108 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(errors, {})
         assert episode is not None
         self.assertEqual(episode.guest_voices, ("Clara", "Lachlan"))
+
+    def test_guest_missing_from_voices_cannot_be_submitted(self) -> None:
+        config = support.make_config(
+            Path(self.tmp.name) / "thomas",
+            voices=("Carter", "Clara", "Lachlan", "Elliot"),
+            banned_voices=(),
+            not_ready_voices=DEFAULT_NOT_READY_VOICES,
+        )
+        episode, errors = validate_payload(
+            support.valid_payload(guest_voices=["Isla"]),
+            config,
+        )
+        self.assertIsNone(episode)
+        self.assertEqual(errors["guest_voices"], "Isla isn't ready for Drama 3 yet.")
+        episode, errors = validate_payload(
+            support.valid_payload(guest_voices=["Clara"]),
+            config,
+        )
+        self.assertEqual(errors, {})
+        assert episode is not None
+        self.assertEqual(episode.guest_voices, ("Clara",))
+
+    def test_library_off_rejects_shelf_and_accepts_upload(self) -> None:
+        config = support.make_config(
+            Path(self.tmp.name) / "uploads-only",
+            library_enabled=False,
+        )
+        episode, errors = validate_payload(support.valid_payload(), config)
+        self.assertIsNone(episode)
+        self.assertIn("library", errors["source"].casefold())
+
+        saved = save_upload(config, r"..\..\Coast Notes.txt", b"uploaded coast\n")
+        self.assertTrue(saved["rel"].startswith("upload:"))
+        self.assertNotIn("..", saved["rel"])
+        self.assertNotIn("/", saved["rel"].split(":", 1)[1])
+        self.assertNotIn("\\", saved["rel"])
+        self.assertEqual(saved["name"], "Coast Notes.txt")
+        path = Path(saved["path"])
+        self.assertEqual(path.parent, config.uploads_dir.resolve())
+        self.assertEqual(path.read_bytes(), b"uploaded coast\n")
+        self.assertFalse((config.uploads_dir.parent / "Coast Notes.txt").exists())
+
+        episode, errors = validate_payload(
+            support.valid_payload(files=[saved["rel"]], research=False),
+            config,
+        )
+        self.assertEqual(errors, {})
+        assert episode is not None
+        self.assertEqual(episode.files, (path,))
+        brief, _written = write_episode(config, episode, now=NOW)
+        self.assertEqual(brief["source"]["files"], [str(path)])
+
+    def test_library_and_upload_share_the_two_book_limit(self) -> None:
+        saved = save_upload(self.config, "extra.md", b"# extra\n")
+        episode, errors = validate_payload(
+            support.valid_payload(files=["On Lighthouses.pdf", saved["rel"]]),
+            self.config,
+        )
+        self.assertEqual(errors, {})
+        assert episode is not None
+        self.assertEqual(
+            [path.name for path in episode.files],
+            ["On Lighthouses.pdf", Path(saved["path"]).name],
+        )
+        self.assertEqual(episode.files[1], Path(saved["path"]))
+        episode, errors = validate_payload(
+            support.valid_payload(
+                files=["On Lighthouses.pdf", "Coast Notes.txt", saved["rel"]]
+            ),
+            self.config,
+        )
+        self.assertIsNone(episode)
+        self.assertIn("two", errors["source"])
+
+    def test_upload_refs_cannot_escape(self) -> None:
+        for rel in (
+            "upload:../secret.txt",
+            "upload:foo/bar.txt",
+            "upload:..\\x.txt",
+            "upload:/etc/passwd.txt",
+            "upload:C:/Windows/x.txt",
+            "upload:",
+        ):
+            with self.subTest(rel=rel):
+                with self.assertRaises(BookError):
+                    resolve_upload(self.config.uploads_dir, rel)
+        episode, errors = validate_payload(
+            support.valid_payload(files=["upload:../secret.txt"]),
+            self.config,
+        )
+        self.assertIsNone(episode)
+        self.assertIn("source", errors)
+
+    def test_upload_rejects_bad_files(self) -> None:
+        with self.assertRaises(BookError):
+            save_upload(self.config, "skip.exe", b"MZ")
+        with self.assertRaises(BookError):
+            save_upload(self.config, "empty.txt", b"")
+        with mock.patch("podcast_brief.MAX_UPLOAD_BYTES", 8):
+            with self.assertRaises(BookError) as caught:
+                save_upload(self.config, "big.txt", b"x" * 20)
+        self.assertIn("200 MB", str(caught.exception))
 
     def test_defaults_when_length_omitted(self) -> None:
         payload = support.valid_payload()

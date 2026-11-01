@@ -1,5 +1,7 @@
 {
   "books_dir": "C:\\PodcastPipeline\\books",
+  "uploads_dir": "uploads/books",
+  "library_enabled": true,
   "briefs_dir": "C:\\PodcastPipeline\\briefs",
   "launcher_cmd": "& 'C:\\PodcastPipeline\\launch_episode.ps1' -BriefPath {brief_path}",
   "voices": [
