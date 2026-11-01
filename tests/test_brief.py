@@ -391,7 +391,8 @@ class ValidationTests(unittest.TestCase):
                 length_minutes=20,
                 tone="debate",
                 depth="intro",
-                notes="  ",
+                angle="  ",
+                skip="  ",
             ),
             self.config,
         )
@@ -402,7 +403,8 @@ class ValidationTests(unittest.TestCase):
         self.assertTrue(episode.research)
         self.assertEqual(episode.content_style, "v2.5")
         self.assertEqual(episode.guest_voices, ("Elena",))
-        self.assertEqual(episode.notes, "")
+        self.assertEqual(episode.angle, "")
+        self.assertEqual(episode.skip, "")
         self.assertFalse(hasattr(episode, "theme"))
         self.assertFalse(hasattr(episode, "source_type"))
 
@@ -716,7 +718,8 @@ class ValidationTests(unittest.TestCase):
             ({"tone": "Calm"}, "tone"),
             ({"tone": ""}, "tone"),
             ({"depth": "expert"}, "depth"),
-            ({"notes": "x" * 4001}, "notes"),
+            ({"angle": "x" * 2001}, "angle"),
+            ({"skip": "x" * 2001}, "skip"),
         ]
         for overrides, field in cases:
             with self.subTest(overrides=overrides):
@@ -742,6 +745,111 @@ class ValidationTests(unittest.TestCase):
     def test_carter_message_is_specific(self) -> None:
         _, errors = validate_payload(support.valid_payload(guest_voices=["Carter"]), self.config)
         self.assertIn("Carter hosts", errors["guest_voices"])
+
+    def test_angle_and_skip(self) -> None:
+        episode, errors = validate_payload(
+            support.valid_payload(
+                angle="  how habits form  ",
+                skip="  the shipping tables  ",
+            ),
+            self.config,
+        )
+        self.assertEqual(errors, {})
+        assert episode is not None
+        self.assertEqual(episode.angle, "how habits form")
+        self.assertEqual(episode.skip, "the shipping tables")
+
+        episode, errors = validate_payload(
+            support.valid_payload(angle="a" * 2000, skip="b" * 2000),
+            self.config,
+        )
+        self.assertEqual(errors, {})
+        assert episode is not None
+        self.assertEqual(episode.angle, "a" * 2000)
+        self.assertEqual(episode.skip, "b" * 2000)
+        brief, _path = write_episode(self.config, episode, now=NOW)
+        self.assertEqual(brief["angle"], "a" * 2000)
+        self.assertEqual(brief["skip"], "b" * 2000)
+        self.assertNotIn("notes", brief)
+
+        _, errors = validate_payload(support.valid_payload(angle="a" * 2001), self.config)
+        self.assertEqual(errors["angle"], "Keep angle under 2000 characters.")
+        _, errors = validate_payload(support.valid_payload(skip="b" * 2001), self.config)
+        self.assertEqual(errors["skip"], "Keep skip under 2000 characters.")
+        _, errors = validate_payload(support.valid_payload(angle=12), self.config)
+        self.assertEqual(errors["angle"], "Angle must be text.")
+        _, errors = validate_payload(support.valid_payload(skip=12), self.config)
+        self.assertEqual(errors["skip"], "Skip must be text.")
+        _, errors = validate_payload(support.valid_payload(angle="bad\x00"), self.config)
+        self.assertEqual(errors["angle"], "Angle contains an invalid character.")
+        _, errors = validate_payload(support.valid_payload(skip="bad\x00"), self.config)
+        self.assertEqual(errors["skip"], "Skip contains an invalid character.")
+
+    def test_legacy_notes_map_into_empty_angle(self) -> None:
+        payload = support.valid_payload(notes="  how habits form  ")
+        del payload["angle"]
+        episode, errors = validate_payload(payload, self.config)
+        self.assertEqual(errors, {})
+        assert episode is not None
+        self.assertEqual(episode.angle, "how habits form")
+        self.assertEqual(episode.skip, "")
+        brief, _path = write_episode(self.config, episode, now=NOW)
+        self.assertEqual(brief["angle"], "how habits form")
+        self.assertEqual(brief["skip"], "")
+        self.assertNotIn("notes", brief)
+
+        episode, errors = validate_payload(
+            support.valid_payload(angle="   ", notes="  leave the tables  "),
+            self.config,
+        )
+        self.assertEqual(errors, {})
+        assert episode is not None
+        self.assertEqual(episode.angle, "leave the tables")
+
+        episode, errors = validate_payload(
+            support.valid_payload(angle="", notes="   "),
+            self.config,
+        )
+        self.assertEqual(errors, {})
+        assert episode is not None
+        self.assertEqual(episode.angle, "")
+
+        episode, errors = validate_payload(
+            support.valid_payload(angle="The focus.", notes="x" * 4001),
+            self.config,
+        )
+        self.assertEqual(errors, {})
+        assert episode is not None
+        self.assertEqual(episode.angle, "The focus.")
+
+        episode, errors = validate_payload(
+            support.valid_payload(angle="", notes="n" * 2000),
+            self.config,
+        )
+        self.assertEqual(errors, {})
+        assert episode is not None
+        self.assertEqual(episode.angle, "n" * 2000)
+
+        episode, errors = validate_payload(
+            support.valid_payload(angle="", notes="n" * 2001),
+            self.config,
+        )
+        self.assertIsNone(episode)
+        self.assertEqual(errors["angle"], "Keep angle under 2000 characters.")
+
+        episode, errors = validate_payload(
+            support.valid_payload(angle="", notes="bad\x00"),
+            self.config,
+        )
+        self.assertIsNone(episode)
+        self.assertEqual(errors["angle"], "Angle contains an invalid character.")
+
+        episode, errors = validate_payload(
+            support.valid_payload(angle="", notes=7),
+            self.config,
+        )
+        self.assertIsNone(episode)
+        self.assertEqual(errors["angle"], "Angle must be text.")
 
 
 class BriefWriteTests(unittest.TestCase):
@@ -779,9 +887,13 @@ class BriefWriteTests(unittest.TestCase):
                 "depth",
                 "quiz",
                 "tts",
-                "notes",
+                "angle",
+                "skip",
             ],
         )
+        self.assertEqual(brief["angle"], "Open on the lamp.")
+        self.assertEqual(brief["skip"], "")
+        self.assertNotIn("notes", brief)
         self.assertEqual(brief["schema_version"], 2)
         self.assertEqual(brief["created_at"], "2026-10-25T14:30:12-04:00")
         self.assertEqual(datetime.fromisoformat(brief["created_at"]), NOW)

@@ -55,7 +55,8 @@ def valid_payload(**overrides) -> dict:
         "guest_voices": ["Elena", "Jonah"],
         "tone": "calm",
         "depth": "deep",
-        "notes": "Open on the lamp.",
+        "angle": "Open on the lamp.",
+        "skip": "",
         "tts": {"engine": "not the real engine"},
         "host": "Hugh",
     }

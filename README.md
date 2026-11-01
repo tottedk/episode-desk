@@ -123,7 +123,8 @@ On Windows the process is created with `CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GR
 - **Tone.** calm, playful, debate, or serious.
 - **Depth.** intro, standard, or deep.
 - **Speech.** Fish Audio Drama 3, fallback VibeVoice-7B. Not editable.
-- **Notes.** Optional, up to 4000 characters.
+- **Angle.** Optional, up to 2000 characters. The episode's angle or focus.
+- **Skip.** Optional, up to 2000 characters. Chapters, topics, or tangents to leave out.
 
 On submit the desk validates the form, writes the brief, and starts `launcher_cmd` unless `--dry-run` / `-DryRun` is on. The page shows the brief path and, when it launched the pipeline, the process id. The status panel polls `status_file` every 10 seconds.
 
@@ -157,7 +158,8 @@ The slug comes from the topic. It is lowercase ASCII, non-letters become hyphens
     "engine": "Fish Audio Drama 3",
     "fallback": "VibeVoice-7B"
   },
-  "notes": ""
+  "angle": "",
+  "skip": ""
 }
 ```
 
@@ -183,7 +185,10 @@ The desk writes schema 2 only. Briefs already sitting in the briefs folder are n
 | `quiz` | Always `false`. The desk does not ask. A value sent by the client is ignored. The pipeline still reads the key. |
 | `tts.engine` | Always `Fish Audio Drama 3`. |
 | `tts.fallback` | Always `VibeVoice-7B`. The pipeline may use it only as a fallback. |
-| `notes` | String. May be empty. |
+| `angle` | String. May be empty. The episode's angle or focus, at most 2000 characters. |
+| `skip` | String. May be empty. Chapters, topics, or tangents to leave out, at most 2000 characters. |
+
+A request that still sends `notes` stores that text as `angle` when `angle` is empty. The brief does not include `notes`.
 
 Anything the browser sends for `host`, `tts`, or `quiz` is ignored. The server writes the fixed values, including `"quiz": false`. The status panel reads the pipeline status file as plain text. A line containing `step=gen research` is shown as "Researching the web...". A line containing `ABORT research too thin` is shown unchanged.
 

@@ -309,6 +309,15 @@ class ServerTest(unittest.TestCase):
             self.assertIn(f'value="{tone}"', html)
         for depth in ("intro", "standard", "deep"):
             self.assertIn(f'value="{depth}"', html)
+        self.assertIn('id="angle"', html)
+        self.assertIn('id="skip"', html)
+        self.assertEqual(html.count('maxlength="2000"'), 2)
+        self.assertNotIn('id="notes"', html)
+        self.assertIn("how habits form, not productivity tips", html)
+        self.assertIn("Chapters, topics or tangents to leave out.", html)
+        self.assertIn("Keep angle under 2000 characters.", script)
+        self.assertIn("Keep skip under 2000 characters.", script)
+        self.assertNotIn("Keep notes under 4000", script)
 
     def test_security_headers_and_unknown_route(self) -> None:
         status, payload, headers = self.request("GET", "/api/health")

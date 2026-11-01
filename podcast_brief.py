@@ -73,7 +73,8 @@ TTS_FALLBACK = "VibeVoice-7B"
 SCHEMA_VERSION = 2
 
 MAX_TOPIC_LENGTH = 600
-MAX_NOTES_LENGTH = 4000
+MAX_ANGLE_LENGTH = 2000
+MAX_SKIP_LENGTH = 2000
 MAX_BOOKS_LISTED = 2000
 MAX_STATUS_BYTES = 16_384
 MAX_LAUNCHER_LENGTH = 2000
@@ -131,7 +132,8 @@ class EpisodeRequest:
     guest_voices: tuple[str, ...]
     tone: str
     depth: str
-    notes: str
+    angle: str
+    skip: str
 
 
 def load_config(path: Path) -> AppConfig:
@@ -494,9 +496,23 @@ def validate_payload(
     if depth_error:
         errors["depth"] = depth_error
 
-    notes, notes_error = _clean_notes(payload.get("notes", ""))
-    if notes_error:
-        errors["notes"] = notes_error
+    angle, angle_error = _clean_text(payload.get("angle", ""), "Angle", MAX_ANGLE_LENGTH)
+    if angle_error:
+        errors["angle"] = angle_error
+
+    skip, skip_error = _clean_text(payload.get("skip", ""), "Skip", MAX_SKIP_LENGTH)
+    if skip_error:
+        errors["skip"] = skip_error
+
+    # Old clients sent free-text notes. Keep that text when angle was left empty.
+    legacy = payload.get("notes")
+    if angle == "" and legacy is not None and not (isinstance(legacy, str) and not legacy.strip()):
+        mapped, mapped_error = _clean_text(legacy, "Angle", MAX_ANGLE_LENGTH)
+        if mapped_error:
+            errors["angle"] = mapped_error
+            angle = None
+        else:
+            angle = mapped
 
     if (
         errors
@@ -507,7 +523,8 @@ def validate_payload(
         or guests is None
         or tone is None
         or depth is None
-        or notes is None
+        or angle is None
+        or skip is None
     ):
         return None, errors or {"form": "The brief could not be validated."}
 
@@ -521,7 +538,8 @@ def validate_payload(
             guest_voices=guests,
             tone=tone,
             depth=depth,
-            notes=notes,
+            angle=angle,
+            skip=skip,
         ),
         {},
     )
@@ -562,7 +580,8 @@ def build_brief(episode: EpisodeRequest, *, brief_id: str, now: datetime) -> dic
             "engine": TTS_ENGINE,
             "fallback": TTS_FALLBACK,
         },
-        "notes": episode.notes,
+        "angle": episode.angle,
+        "skip": episode.skip,
     }
 
 
@@ -833,16 +852,16 @@ def _clean_topic(topic: str) -> tuple[str | None, str | None]:
     return cleaned, None
 
 
-def _clean_notes(notes: object) -> tuple[str | None, str | None]:
-    if notes is None:
-        notes = ""
-    if not isinstance(notes, str):
-        return None, "Notes must be text."
-    if "\x00" in notes:
-        return None, "Notes contain an invalid character."
-    cleaned = notes.strip()
-    if len(cleaned) > MAX_NOTES_LENGTH:
-        return None, "Keep notes under 4000 characters."
+def _clean_text(value: object, label: str, limit: int) -> tuple[str | None, str | None]:
+    if value is None:
+        value = ""
+    if not isinstance(value, str):
+        return None, f"{label} must be text."
+    if "\x00" in value:
+        return None, f"{label} contains an invalid character."
+    cleaned = value.strip()
+    if len(cleaned) > limit:
+        return None, f"Keep {label.lower()} under {limit} characters."
     return cleaned, None
 
 

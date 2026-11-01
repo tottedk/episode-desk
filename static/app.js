@@ -8,7 +8,8 @@ const ERROR_KEYS = [
   "tone",
   "depth",
   "length_minutes",
-  "notes",
+  "angle",
+  "skip",
 ];
 
 const NEVER_OFFER = new Set(["carter", "hugh", "elliot"]);
@@ -416,7 +417,8 @@ function collectPayload() {
     guest_voices: state.selectedVoices.slice(),
     tone: document.getElementById("tone").value,
     depth: document.getElementById("depth").value,
-    notes: document.getElementById("notes").value,
+    angle: document.getElementById("angle").value,
+    skip: document.getElementById("skip").value,
   };
 }
 
@@ -444,7 +446,8 @@ function clientErrors(payload) {
   }
   if (!payload.tone) errors.tone = "Choose a tone.";
   if (!payload.depth) errors.depth = "Choose a depth.";
-  if (payload.notes.trim().length > 4000) errors.notes = "Keep notes under 4000 characters.";
+  if (payload.angle.trim().length > 2000) errors.angle = "Keep angle under 2000 characters.";
+  if (payload.skip.trim().length > 2000) errors.skip = "Keep skip under 2000 characters.";
   return errors;
 }
 
