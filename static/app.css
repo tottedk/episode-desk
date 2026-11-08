@@ -618,6 +618,12 @@ footer.meta {
 
 footer.meta p { margin: 0 0 4px; }
 
+footer.meta p.attribution {
+  margin-top: 12px;
+  color: #efe6d8;
+  font-weight: 600;
+}
+
 footer.meta code,
 .monitor code {
   font-family: var(--mono);

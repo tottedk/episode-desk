@@ -150,28 +150,29 @@ class VoiceTests(unittest.TestCase):
         voices = selectable_voices(
             config.voices, config.banned_voices, config.not_ready_voices
         )
-        self.assertEqual(voices, ["Clara", "Lachlan"])
+        self.assertEqual(voices, ["Clara"])
         choices = voice_choices(
             config.voices, config.banned_voices, config.not_ready_voices
         )
         self.assertEqual(
             [choice["name"] for choice in choices if choice["ready"] is not True],
-            ["Isla", "Marcus", "Willa", "Zara", "Imogen", "Frank", "Samuel"],
+            ["Lachlan", "Isla", "Marcus", "Willa", "Zara", "Imogen", "Frank", "Samuel"],
         )
         folds = {voice.casefold() for voice in voices}
         self.assertNotIn("carter", folds)
         self.assertNotIn("hugh", folds)
         self.assertNotIn("elliot", folds)
+        self.assertNotIn("lachlan", folds)
         for banned in ("maya", "declan", "alice", "mary"):
             self.assertNotIn(banned, folds)
         self.assertNotIn("Elliot", config.voices)
-        self.assertEqual(config.not_ready_voices, DEFAULT_NOT_READY_VOICES)
+        self.assertEqual(config.not_ready_voices, ("Lachlan",) + DEFAULT_NOT_READY_VOICES)
         self.assertTrue(config.library_enabled)
         self.assertEqual(
             config.uploads_dir,
             (ROOT / "uploads" / "books").resolve(),
         )
-        self.assertGreaterEqual(len(voices), 2)
+        self.assertEqual(voices, ["Clara"])
         self.assertIn("{brief_path}", config.launcher_cmd)
         rendered = render_launcher_command(
             config.launcher_cmd,

@@ -22,6 +22,6 @@
     "Mary"
   ],
   "banned_voices": ["Maya", "Declan", "Alice", "Mary"],
-  "not_ready_voices": ["Isla", "Marcus", "Willa", "Zara", "Imogen", "Frank", "Samuel"],
+  "not_ready_voices": ["Lachlan", "Isla", "Marcus", "Willa", "Zara", "Imogen", "Frank", "Samuel"],
   "status_file": "C:\\PodcastPipeline\\status.txt"
 }
