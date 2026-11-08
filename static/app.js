@@ -7,6 +7,7 @@ const ERROR_KEYS = [
   "guest_voices",
   "tone",
   "depth",
+  "humanity",
   "length_minutes",
   "angle",
   "skip",
@@ -417,6 +418,7 @@ function collectPayload() {
     guest_voices: state.selectedVoices.slice(),
     tone: document.getElementById("tone").value,
     depth: document.getElementById("depth").value,
+    humanity: document.getElementById("humanity").value,
     angle: document.getElementById("angle").value,
     skip: document.getElementById("skip").value,
   };
@@ -435,7 +437,7 @@ function clientErrors(payload) {
   } else if (!payload.research && payload.files.length < 1) {
     errors.source = "Attach a book or PDF, or turn on web research.";
   }
-  if (!["v2.5", "v2.3"].includes(payload.content_style)) {
+  if (!["v2.6", "v2.5", "v2.3"].includes(payload.content_style)) {
     errors.content_style = "Choose a script style.";
   }
   if (payload.guest_voices.length < 1 || payload.guest_voices.length > 2) {
@@ -446,6 +448,7 @@ function clientErrors(payload) {
   }
   if (!payload.tone) errors.tone = "Choose a tone.";
   if (!payload.depth) errors.depth = "Choose a depth.";
+  if (!["low", "medium", "high"].includes(payload.humanity)) errors.humanity = "Choose a humanity level.";
   if (payload.angle.trim().length > 2000) errors.angle = "Keep angle under 2000 characters.";
   if (payload.skip.trim().length > 2000) errors.skip = "Keep skip under 2000 characters.";
   return errors;
