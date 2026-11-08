@@ -1,0 +1,46 @@
+MIT License
+
+Copyright (c) 2026 Thomas Jensen
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+Scope
+
+The MIT license above covers original Episode Desk source code in this
+repository, copyright Thomas Jensen. An audit of this repository found no
+vendored third-party source, no copied-code notices, and no package
+dependencies. The desk uses the Python standard library only. There were
+no pre-existing third-party notices to preserve.
+
+This MIT license does not cover:
+
+- Fish Audio Drama 3, or any other Fish Audio material. Drama 3 is used by
+  the separate pipeline under the Fish Audio Community License, Version 1.0
+  (13 October 2026). That license is not MIT. No Drama 3 weights, codecs,
+  or other Fish Audio materials are included in this repository.
+  https://huggingface.co/fishaudio/drama-3/blob/main/LICENSE
+
+- VibeVoice software or weights. The Microsoft VibeVoice source repository
+  is MIT-licensed (Copyright (c) 2025 Microsoft). That grant was not verified
+  for the installed VibeVoice-7B text-to-speech weights, which are a
+  different artifact from Microsoft's current ASR-7B model. Those weights
+  are not included here. Do not treat them as MIT-licensed.
+
+- Audio, episodes, voice-reference clips, books, or model weights. None of
+  those are included in this repository.

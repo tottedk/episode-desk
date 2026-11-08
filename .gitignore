@@ -1,5 +1,53 @@
+# Local config and secrets. config.json holds this machine's paths.
+.env
+.env.*
+!.env.example
+config.json
+*.pem
+*.key
+*credentials*.json
+*token*.json
+
+# Python
 __pycache__/
 *.py[cod]
-config.json
+.venv/
+venv*/
+
+# Model weights. This repo does not ship any.
+models/
+weights/
+*.gguf
+*.safetensors
+*.ckpt
+*.pth
+*.pt
+*.onnx
+
+# Voice reference clips.
+drama3_refs/
+voice_design/
+voice_candidates/
+voices/
+
+# Generated audio, episodes, and local desk runtime files.
+outputs/
+episodes/
+deskr/
+desk_runs/
 uploads/
+briefs/
+logs/
+hwlogs/
 *.tmp
+*.bak*
+*.wav
+*.mp3
+*.flac
+*.ogg
+*.m4a
+*.mp4
+*.webm
+
+# Synthetic unit-test text fixtures under tests/ are tracked on purpose.
+# Do not ignore tests/ wholesale. These rules do not remove files already in history.

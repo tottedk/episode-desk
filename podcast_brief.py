@@ -27,7 +27,8 @@ EXCLUDED_WITH_HOST = "Hugh"
 OUT_VOICES = ("Elliot",)
 DEFAULT_BANNED_VOICES = ("Maya", "Declan", "Alice", "Mary")
 # Shown on the page even when a name is missing from config voices.
-# Clara and Lachlan ship with Drama 3 clips. The other seven do not.
+# Readiness is config, not this tuple. The sample config marks Clara ready.
+# Lachlan stays on the roster and is not ready until a Drama 3 clip exists.
 GUEST_ROSTER = (
     "Clara",
     "Lachlan",
@@ -39,9 +40,11 @@ GUEST_ROSTER = (
     "Frank",
     "Samuel",
 )
-# These roster names have no Drama 3 reference clip yet.
-# config.json can replace this list. An empty list makes a name selectable
-# only when that name is also listed in voices.
+# Built-in default when config.json omits not_ready_voices.
+# Lachlan is also not ready. He is not in this default: the sample config
+# lists him under not_ready_voices. Omitting the key does not mark him
+# not ready. An empty list makes a name selectable only when that name
+# is also listed in voices.
 DEFAULT_NOT_READY_VOICES = (
     "Isla",
     "Marcus",

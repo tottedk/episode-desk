@@ -59,8 +59,9 @@ class ConstraintTests(unittest.TestCase):
         self.assertEqual(data["banned_voices"], ["Maya", "Declan", "Alice", "Mary"])
         self.assertEqual(
             data["not_ready_voices"],
-            ["Isla", "Marcus", "Willa", "Zara", "Imogen", "Frank", "Samuel"],
+            ["Lachlan", "Isla", "Marcus", "Willa", "Zara", "Imogen", "Frank", "Samuel"],
         )
+        self.assertIn("Lachlan", data["not_ready_voices"])
         self.assertEqual(
             data["voices"],
             [
@@ -88,8 +89,52 @@ class ConstraintTests(unittest.TestCase):
 
     def test_config_json_is_gitignored(self) -> None:
         ignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
-        self.assertIn("config.json", ignore)
-        self.assertIn("uploads/", ignore)
+        for pattern in (
+            "config.json",
+            "uploads/",
+            ".env",
+            "models/",
+            "weights/",
+            "*.gguf",
+            "*.safetensors",
+            "voices/",
+            "drama3_refs/",
+            "episodes/",
+            "briefs/",
+            "*.wav",
+            "*.mp3",
+        ):
+            self.assertIn(pattern, ignore)
+
+    def test_license_covers_original_code_only(self) -> None:
+        text = (ROOT / "LICENSE").read_text(encoding="utf-8")
+        self.assertIn("MIT License", text)
+        self.assertIn("Thomas Jensen", text)
+        self.assertIn("Fish Audio Community License", text)
+        self.assertIn("original Episode Desk", text)
+
+    def test_readme_attribution_and_no_personal_paths(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn("Built with Fish Audio", readme)
+        self.assertIn("Fish Audio Community License", readme)
+        self.assertIn("LLM limits", readme)
+        self.assertIn("Lachlan", readme)
+        self.assertNotIn("Clara and Lachlan are the ready guests", readme)
+        self.assertNotIn("C:\\Users", readme)
+        for path in ROOT.rglob("*"):
+            if not path.is_file():
+                continue
+            if path.suffix.lower() not in {".py", ".md", ".json", ".js", ".html", ".css", ".ps1", ".txt"}:
+                continue
+            if ".git" in path.parts:
+                continue
+            text = path.read_text(encoding="utf-8")
+            self.assertNotIn("C:\\Users", text, path.name)
+            self.assertNotRegex(
+                text,
+                r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}",
+                path.name,
+            )
 
 
 if __name__ == "__main__":
