@@ -484,7 +484,8 @@ class ValidationTests(unittest.TestCase):
         episode, errors = validate_payload(payload, self.config)
         self.assertEqual(errors, {})
         assert episode is not None
-        self.assertEqual(episode.content_style, "v2.5")
+        self.assertEqual(episode.content_style, "v2.6")
+        self.assertEqual(episode.humanity, "medium")
 
         episode, errors = validate_payload(
             support.valid_payload(content_style="v2.3"),
@@ -885,6 +886,7 @@ class BriefWriteTests(unittest.TestCase):
                 "guest_voices",
                 "tone",
                 "depth",
+                "humanity",
                 "quiz",
                 "tts",
                 "angle",
@@ -1079,3 +1081,29 @@ class StatusTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HumanityDialTests(unittest.TestCase):
+    """v2.6 (technical template v1.14): humanity dial next to tone and depth."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.config = support.make_config(Path(self.tmp.name))
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_humanity_choices_and_brief(self) -> None:
+        from podcast_brief import build_brief
+
+        for level in ("low", "medium", "high"):
+            episode, errors = validate_payload(support.valid_payload(content_style="v2.6", humanity=level), self.config)
+            self.assertEqual(errors, {})
+            assert episode is not None
+            self.assertEqual(episode.humanity, level)
+            brief = build_brief(episode, brief_id="b1", now=datetime(2026, 11, 7, 12, 0, tzinfo=timezone.utc))
+            self.assertEqual(brief["humanity"], level)
+            self.assertEqual(brief["content_style"], "v2.6")
+        episode, errors = validate_payload(support.valid_payload(humanity="extreme"), self.config)
+        self.assertIsNone(episode)
+        self.assertIn("humanity", errors)

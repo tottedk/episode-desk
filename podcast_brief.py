@@ -65,8 +65,11 @@ LENGTH_MINUTES = (20, 30, 40)
 DEFAULT_LENGTH_MINUTES = 40
 TONES = ("calm", "playful", "debate", "serious")
 DEPTHS = ("intro", "standard", "deep")
-CONTENT_STYLES = ("v2.5", "v2.3")
-DEFAULT_CONTENT_STYLE = "v2.5"
+CONTENT_STYLES = ("v2.6", "v2.5", "v2.3")
+DEFAULT_CONTENT_STYLE = "v2.6"
+# v2.6 (technical template v1.14, 2026-11-07): humanity dial next to tone and depth. Only v2.6 uses it.
+HUMANITY_LEVELS = ("low", "medium", "high")
+DEFAULT_HUMANITY = "medium"
 
 TTS_ENGINE = "Fish Audio Drama 3"
 TTS_FALLBACK = "VibeVoice-7B"
@@ -134,6 +137,7 @@ class EpisodeRequest:
     depth: str
     angle: str
     skip: str
+    humanity: str = DEFAULT_HUMANITY
 
 
 def load_config(path: Path) -> AppConfig:
@@ -496,6 +500,10 @@ def validate_payload(
     if depth_error:
         errors["depth"] = depth_error
 
+    humanity, humanity_error = _clean_humanity(payload)
+    if humanity_error:
+        errors["humanity"] = humanity_error
+
     angle, angle_error = _clean_text(payload.get("angle", ""), "Angle", MAX_ANGLE_LENGTH)
     if angle_error:
         errors["angle"] = angle_error
@@ -523,6 +531,7 @@ def validate_payload(
         or guests is None
         or tone is None
         or depth is None
+        or humanity is None
         or angle is None
         or skip is None
     ):
@@ -540,6 +549,7 @@ def validate_payload(
             depth=depth,
             angle=angle,
             skip=skip,
+            humanity=humanity,
         ),
         {},
     )
@@ -575,6 +585,7 @@ def build_brief(episode: EpisodeRequest, *, brief_id: str, now: datetime) -> dic
         "guest_voices": list(episode.guest_voices),
         "tone": episode.tone,
         "depth": episode.depth,
+        "humanity": episode.humanity,
         "quiz": False,
         "tts": {
             "engine": TTS_ENGINE,
@@ -788,8 +799,15 @@ def _validate_source(
     return topic, tuple(resolved), research, None
 
 
+def _clean_humanity(payload: dict) -> tuple[str | None, str | None]:
+    """Humanity dial (content style v2.6). Omitted means medium."""
+    if "humanity" not in payload:
+        return DEFAULT_HUMANITY, None
+    return _clean_choice(payload.get("humanity"), HUMANITY_LEVELS, "Choose a humanity level.")
+
+
 def _clean_content_style(payload: dict) -> tuple[str | None, str | None]:
-    """Script style. Omitted means v2.5. Anything else must be v2.5 or v2.3."""
+    """Script style. Omitted means v2.6. Anything else must be v2.6, v2.5 or v2.3."""
     if "content_style" not in payload:
         return DEFAULT_CONTENT_STYLE, None
     return _clean_choice(
